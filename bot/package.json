@@ -1,0 +1,11 @@
+{
+  "name": "hw-auction-bot",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "grammy": "^1.35.1",
+    "dotenv": "^16.4.5"
+  }
+}
