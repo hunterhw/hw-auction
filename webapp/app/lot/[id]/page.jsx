@@ -205,7 +205,9 @@ export default function LotPage({ params }) {
 
       <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
+          <div style={{ fontWeight: 900, fontSize: 18 }}>
+  {lot.title} <span style={{ fontSize: 12, opacity: 0.6 }}>v-test-1</span>
+</div>
           <div
             style={{
               padding: "6px 10px",
