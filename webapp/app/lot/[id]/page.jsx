@@ -28,7 +28,13 @@ export default function LotPage({ params }) {
   const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
   const [me, setMe] = useState({ id: null, name: "Ви" });
-
+  const isDesktopView = useMemo(() => {
+  if (typeof window === "undefined") return false;
+  return !(
+    window?.Telegram?.WebApp?.initData &&
+    window.Telegram.WebApp.initData.length > 0
+  );
+}, []);
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
 
