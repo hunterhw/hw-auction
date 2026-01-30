@@ -194,19 +194,26 @@ ws.onclose = () => setWsState("closed");
 
   if (!lot) {
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
-      <div style={{ fontWeight: 900 }}>Завантаження...</div>
+    <div style={{ padding: 16, fontFamily: "system-ui" }}>
+      <div style={{ fontWeight: 900 }}>
+        Завантаження... v-777
+      </div>
 
-      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
         WS URL: {wsUrl || "EMPTY"} <br />
         WS state: {wsState} <br />
         API: {process.env.NEXT_PUBLIC_API_BASE || "EMPTY"}
       </div>
 
-      {err && <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>{err}</div>}
+      {err && (
+        <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
+          {err}
+        </div>
+      )}
     </div>
   );
 }
+
 
 
   return (
