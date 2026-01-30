@@ -4,8 +4,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
 function buildHeaders() {
   const initData = getInitData();
-  // Если initData нет (Telegram Desktop) — просто НЕ отправляем заголовок.
-  // Backend в таком режиме отдаст view-only.
   return initData ? { "x-telegram-initdata": initData } : {};
 }
 
