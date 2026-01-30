@@ -164,7 +164,22 @@ export default function LotPage({ params }) {
 
   if (!lot) return <div style={{ padding: 16 }}>Завантаження...</div>;
 
-  return (
+  return ({isDesktopView && (
+  <div
+    style={{
+      margin: "10px 0",
+      padding: "10px",
+      background: "#111",
+      borderRadius: "10px",
+      color: "#fff",
+      textAlign: "center",
+      fontWeight: "bold"
+    }}
+  >
+    Режим перегляду. Ставки доступні лише з телефону.
+  </div>
+)}
+
     <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
