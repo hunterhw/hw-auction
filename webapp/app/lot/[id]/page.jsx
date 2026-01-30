@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiPost } from "../../../lib/api";
-import { tgReady } from "../../../lib/tg";
+import { apiPost } from "@/lib/api";
+import { tgReady } from "@/lib/tg";
+
 
 function fmtTime(msLeft) {
   const s = Math.max(0, Math.floor(msLeft / 1000));
