@@ -9,10 +9,8 @@ export function tgReady() {
   window?.Telegram?.WebApp?.expand?.();
 }
 
-// Ждём, пока Telegram подставит initData (иногда оно приходит не мгновенно)
 export async function waitForInitData(timeoutMs = 4000) {
   if (typeof window === "undefined") return "";
-
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const v = window?.Telegram?.WebApp?.initData || "";
