@@ -17,14 +17,13 @@ export default function Page() {
   }, []);
 
 if (err) {
-  if (err === "NO_INITDATA") {
-    return (
-      <div style={{ padding: 16 }}>
-        Цей аукціон відкривайте з телефону в Telegram (Mini App).<br />
-        На Telegram Desktop інколи не передається авторизація.
-      </div>
-    );
-  }
+  const msg =
+    err === "NOT_SUBSCRIBED"
+      ? "Потрібна підписка на канал @hw_hunter_ua"
+      : `Помилка: ${err}`;
+
+  return <div style={{ padding: 16 }}>{msg}</div>;
+}
 
   const msg =
     err === "NOT_SUBSCRIBED"
