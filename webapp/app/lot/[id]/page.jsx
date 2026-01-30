@@ -29,6 +29,8 @@ export default function LotPage({ params }) {
   const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
   const [me, setMe] = useState({ id: null, name: "Ви" });
+  const [wsState, setWsState] = useState("init"); // init | connecting | open | closed | error
+
 
   const isDesktopView = useMemo(() => {
     if (typeof window === "undefined") return false;
@@ -59,7 +61,17 @@ export default function LotPage({ params }) {
 
   useEffect(() => {
     setErr("");
-    const ws = new WebSocket(wsUrl);
+    setWsState("connecting");
+const ws = new WebSocket(wsUrl);
+
+ws.onopen = () => {
+  setWsState("open");
+  ws.send(JSON.stringify({ type: "JOIN_LOT", lotId }));
+};
+
+ws.onclose = () => setWsState("closed");
+
+
 
     ws.onopen = () => ws.send(JSON.stringify({ type: "JOIN_LOT", lotId }));
     ws.onmessage = (ev) => {
@@ -180,7 +192,22 @@ export default function LotPage({ params }) {
       ? 0
       : (window?.Telegram?.WebApp?.initData || "").length;
 
-  if (!lot) return <div style={{ padding: 16 }}>Завантаження...</div>;
+  if (!lot) {
+  return (
+    <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
+      <div style={{ fontWeight: 900 }}>Завантаження...</div>
+
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+        WS URL: {wsUrl || "EMPTY"} <br />
+        WS state: {wsState} <br />
+        API: {process.env.NEXT_PUBLIC_API_BASE || "EMPTY"}
+      </div>
+
+      {err && <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>{err}</div>}
+    </div>
+  );
+}
+
 
   return (
     <>
