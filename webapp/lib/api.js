@@ -2,24 +2,27 @@ import { getInitData, waitForInitData } from "./tg";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
-async function buildHeaders() {
-  // сначала пробуем сразу
+async function headersForGet() {
+  // просмотр можно и без initData (для Desktop view-only)
+  const initData = getInitData();
+  return initData ? { "x-telegram-initdata": initData } : {};
+}
+
+async function headersForPost() {
+  // ставки — только с initData, ждём его
   let initData = getInitData();
-
-  // если пусто — ждём немного (на телефоне часто появляется не мгновенно)
-  if (!initData) initData = await waitForInitData();
-
+  if (!initData) initData = await waitForInitData(5000);
   return initData ? { "x-telegram-initdata": initData } : {};
 }
 
 export async function apiGet(path) {
-  const headers = await buildHeaders();
+  const headers = await headersForGet();
   const res = await fetch(`${API_BASE}${path}`, { headers });
   return res.json();
 }
 
 export async function apiPost(path, body) {
-  const headers = await buildHeaders();
+  const headers = await headersForPost();
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { ...headers, "content-type": "application/json" },
