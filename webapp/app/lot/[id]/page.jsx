@@ -53,6 +53,11 @@ export default function LotPage({ params }) {
       });
     }
   }, []);
+useEffect(() => {
+  const len = (window?.Telegram?.WebApp?.initData || "").length;
+  const u = window?.Telegram?.WebApp?.initDataUnsafe?.user;
+  alert("initData length: " + len + "\nuser: " + (u?.id || "none"));
+}, []);
 
   useEffect(() => {
     setErr("");
