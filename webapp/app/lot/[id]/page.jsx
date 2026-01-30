@@ -28,13 +28,15 @@ export default function LotPage({ params }) {
   const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
   const [me, setMe] = useState({ id: null, name: "Ви" });
+
   const isDesktopView = useMemo(() => {
-  if (typeof window === "undefined") return false;
-  return !(
-    window?.Telegram?.WebApp?.initData &&
-    window.Telegram.WebApp.initData.length > 0
-  );
-}, []);
+    if (typeof window === "undefined") return false;
+    return !(
+      window?.Telegram?.WebApp?.initData &&
+      window.Telegram.WebApp.initData.length > 0
+    );
+  }, []);
+
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
 
@@ -49,15 +51,10 @@ export default function LotPage({ params }) {
     if (u?.id) {
       setMe({
         id: String(u.id),
-        name: u.username ? `@${u.username}` : (u.first_name || "Ви")
+        name: u.username ? `@${u.username}` : (u.first_name || "Ви"),
       });
     }
   }, []);
-useEffect(() => {
-  const len = (window?.Telegram?.WebApp?.initData || "").length;
-  const u = window?.Telegram?.WebApp?.initDataUnsafe?.user;
-  alert("initData length: " + len + "\nuser: " + (u?.id || "none"));
-}, []);
 
   useEffect(() => {
     setErr("");
@@ -87,8 +84,16 @@ useEffect(() => {
         }, 2200);
 
         // outbid + haptic
-        const newLeader = msg.lot?.leaderUserId ? String(msg.lot.leaderUserId) : null;
-        if (me?.id && prevLeader === String(me.id) && newLeader && newLeader !== String(me.id)) {
+        const newLeader = msg.lot?.leaderUserId
+          ? String(msg.lot.leaderUserId)
+          : null;
+
+        if (
+          me?.id &&
+          prevLeader === String(me.id) &&
+          newLeader &&
+          newLeader !== String(me.id)
+        ) {
           setOutbid(true);
           haptic("notification", "warning");
           haptic("impact", "heavy");
@@ -140,19 +145,21 @@ useEffect(() => {
   async function bid(amount) {
     setErr("");
     const r = await apiPost(`/lots/${lotId}/bid`, { amount });
+
     if (r?.error) {
       if (String(r.error).startsWith("MIN_BID_")) {
         const min = String(r.error).replace("MIN_BID_", "");
         setErr(`Мінімальна наступна ставка: ₴${min}`);
       } else if (r.error === "NOT_SUBSCRIBED") {
         setErr("Потрібна підписка на канал @hw_hunter_ua");
+      } else if (r.error === "BID_REQUIRES_TELEGRAM") {
+        setErr("Ставки доступні лише з телефону в Telegram (Mini App).");
       } else {
         setErr(`Помилка: ${r.error}`);
       }
       return;
     }
 
-    // success haptic
     haptic("notification", "success");
     haptic("impact", "medium");
   }
@@ -167,196 +174,208 @@ useEffect(() => {
     bid(amount);
   }
 
+  const initLen =
+    typeof window === "undefined"
+      ? 0
+      : (window?.Telegram?.WebApp?.initData || "").length;
+
   if (!lot) return <div style={{ padding: 16 }}>Завантаження...</div>;
 
-  return ({isDesktopView && (
-  <div
-    style={{
-      margin: "10px 0",
-      padding: "10px",
-      background: "#111",
-      borderRadius: "10px",
-      color: "#fff",
-      textAlign: "center",
-      fontWeight: "bold"
-    }}
-  >
-    Режим перегляду. Ставки доступні лише з телефону.
-  </div>
-)}
-
-    <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
-        <div
-          style={{
-            padding: "6px 10px",
-            borderRadius: 999,
-            background: statusColor,
-            color: "white",
-            fontWeight: 800,
-            fontSize: 12,
-            whiteSpace: "nowrap"
-          }}
-        >
-          {statusLabel}
-        </div>
+  return (
+    <>
+      <div style={{ fontSize: 12, opacity: 0.7, margin: "8px 14px 0" }}>
+        initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
       </div>
 
-      <div style={{ position: "relative", marginTop: 10 }}>
-        <img
-          src={lot.imageUrl}
-          alt={lot.title}
-          style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
-        />
+      {isDesktopView && (
+        <div
+          style={{
+            margin: "10px 14px 0",
+            padding: "10px",
+            background: "#111",
+            borderRadius: "10px",
+            color: "#fff",
+            textAlign: "center",
+            fontWeight: "bold",
+          }}
+        >
+          Режим перегляду. Ставки доступні лише з телефону.
+        </div>
+      )}
 
-        <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 8 }}>
-          {toasts.map((t) => (
-            <div
-              key={t.id}
-              style={{
-                background: "rgba(0,0,0,0.65)",
-                color: "white",
-                padding: "8px 10px",
-                borderRadius: 12,
-                fontWeight: 700,
-                fontSize: 12,
-                maxWidth: 260
-              }}
-            >
-              {t.text}
-            </div>
-          ))}
+      <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
+          <div
+            style={{
+              padding: "6px 10px",
+              borderRadius: 999,
+              background: statusColor,
+              color: "white",
+              fontWeight: 800,
+              fontSize: 12,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {statusLabel}
+          </div>
         </div>
 
-        {outbid && (
+        <div style={{ position: "relative", marginTop: 10 }}>
+          <img
+            src={lot.imageUrl}
+            alt={lot.title}
+            style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
+          />
+
+          <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 8 }}>
+            {toasts.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  background: "rgba(0,0,0,0.65)",
+                  color: "white",
+                  padding: "8px 10px",
+                  borderRadius: 12,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  maxWidth: 260,
+                }}
+              >
+                {t.text}
+              </div>
+            ))}
+          </div>
+
+          {outbid && (
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "55%",
+                transform: "translate(-50%, -50%)",
+                background: "rgba(255, 0, 0, 0.85)",
+                color: "white",
+                padding: "12px 14px",
+                borderRadius: 14,
+                fontWeight: 1000,
+                fontSize: 16,
+                letterSpacing: 1,
+                border: "1px solid rgba(255,255,255,0.25)",
+              }}
+            >
+              ТЕБЕ ПЕРЕБИЛИ
+            </div>
+          )}
+
           <div
             style={{
               position: "absolute",
-              left: "50%",
-              top: "55%",
-              transform: "translate(-50%, -50%)",
-              background: "rgba(255, 0, 0, 0.85)",
+              right: 10,
+              top: 10,
+              background: isHot ? "rgba(255,0,0,0.85)" : "rgba(0,0,0,0.65)",
               color: "white",
-              padding: "12px 14px",
+              padding: "10px 12px",
               borderRadius: 14,
-              fontWeight: 1000,
-              fontSize: 16,
+              fontWeight: 900,
+              fontSize: 18,
               letterSpacing: 1,
-              border: "1px solid rgba(255,255,255,0.25)"
             }}
           >
-            ТЕБЕ ПЕРЕБИЛИ
+            {timeLeft}
           </div>
-        )}
+        </div>
 
         <div
           style={{
-            position: "absolute",
-            right: 10,
-            top: 10,
-            background: isHot ? "rgba(255,0,0,0.85)" : "rgba(0,0,0,0.65)",
-            color: "white",
-            padding: "10px 12px",
+            marginTop: 12,
+            display: "grid",
+            gap: 6,
+            border: "1px solid #2c2c2c",
             borderRadius: 14,
-            fontWeight: 900,
-            fontSize: 18,
-            letterSpacing: 1
+            padding: 12,
+            background: "#0f0f0f",
+            color: "white",
           }}
         >
-          {timeLeft}
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ opacity: 0.8 }}>Поточна ставка</div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>₴{lot.currentPrice}</div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ opacity: 0.8 }}>Мін. наступна</div>
+            <div style={{ fontWeight: 900 }}>₴{nextMin}</div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ opacity: 0.8 }}>Крок</div>
+            <div style={{ fontWeight: 900 }}>₴{lot.bidStep}</div>
+          </div>
         </div>
-      </div>
 
-      <div
-        style={{
-          marginTop: 12,
-          display: "grid",
-          gap: 6,
-          border: "1px solid #2c2c2c",
-          borderRadius: 14,
-          padding: 12,
-          background: "#0f0f0f",
-          color: "white"
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <div style={{ opacity: 0.8 }}>Поточна ставка</div>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>₴{lot.currentPrice}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
+          <button
+            onClick={() => quickBid(10)}
+            disabled={lot.status !== "LIVE" || isDesktopView}
+            style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
+          >
+            +₴10
+          </button>
+          <button
+            onClick={() => quickBid(20)}
+            disabled={lot.status !== "LIVE" || isDesktopView}
+            style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
+          >
+            +₴20
+          </button>
+          <button
+            onClick={() => quickBid(50)}
+            disabled={lot.status !== "LIVE" || isDesktopView}
+            style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
+          >
+            +₴50
+          </button>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <div style={{ opacity: 0.8 }}>Мін. наступна</div>
-          <div style={{ fontWeight: 900 }}>₴{nextMin}</div>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <div style={{ opacity: 0.8 }}>Крок</div>
-          <div style={{ fontWeight: 900 }}>₴{lot.bidStep}</div>
-        </div>
-      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
         <button
-          onClick={() => quickBid(10)}
-          disabled={lot.status !== "LIVE"}
-          style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
+          onClick={() => bid(nextMin)}
+          disabled={lot.status !== "LIVE" || isDesktopView}
+          style={{
+            marginTop: 10,
+            width: "100%",
+            padding: "14px 12px",
+            borderRadius: 14,
+            border: "1px solid #333",
+            fontWeight: 1000,
+            fontSize: 16,
+          }}
         >
-          +₴10
+          ЗРОБИТИ СТАВКУ ₴{nextMin}
         </button>
-        <button
-          onClick={() => quickBid(20)}
-          disabled={lot.status !== "LIVE"}
-          style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
-        >
-          +₴20
-        </button>
-        <button
-          onClick={() => quickBid(50)}
-          disabled={lot.status !== "LIVE"}
-          style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
-        >
-          +₴50
-        </button>
-      </div>
 
-      <button
-        onClick={() => bid(nextMin)}
-        disabled={lot.status !== "LIVE"}
-        style={{
-          marginTop: 10,
-          width: "100%",
-          padding: "14px 12px",
-          borderRadius: 14,
-          border: "1px solid #333",
-          fontWeight: 1000,
-          fontSize: 16
-        }}
-      >
-        ЗРОБИТИ СТАВКУ ₴{nextMin}
-      </button>
+        {err && <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>{err}</div>}
 
-      {err && <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>{err}</div>}
-
-      <div style={{ marginTop: 14 }}>
-        <div style={{ fontWeight: 900, marginBottom: 8 }}>Історія ставок</div>
-        <div style={{ display: "grid", gap: 8 }}>
-          {bids.map((b) => (
-            <div
-              key={b.id}
-              style={{
-                border: "1px solid #2c2c2c",
-                borderRadius: 14,
-                padding: 10,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center"
-              }}
-            >
-              <div style={{ fontWeight: 800 }}>{b.userName}</div>
-              <div style={{ fontWeight: 1000 }}>₴{b.amount}</div>
-            </div>
-          ))}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Історія ставок</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {bids.map((b) => (
+              <div
+                key={b.id}
+                style={{
+                  border: "1px solid #2c2c2c",
+                  borderRadius: 14,
+                  padding: 10,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>{b.userName}</div>
+                <div style={{ fontWeight: 1000 }}>₴{b.amount}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
