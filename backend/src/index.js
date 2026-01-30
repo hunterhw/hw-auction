@@ -31,7 +31,7 @@ async function checkSubscription(userId) {
 
 function authFromInitData(req) {
   const initData = req.headers["x-telegram-initdata"];
-  if (!initData || typeof initData !== "string") throw new Error("NO_INITDATA");
+  if (!initData || typeof initData !== "string" || initData.length === 0) return null; // Desktop fallback
   if (!verifyTelegramInitData(initData, BOT_TOKEN)) throw new Error("BAD_INITDATA");
   const user = parseUserFromInitData(initData);
   if (!user?.id) throw new Error("NO_USER");
@@ -43,11 +43,18 @@ app.get("/health", (_, res) => res.json({ ok: true }));
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
+
+    // ✅ Desktop / browser fallback: allow VIEW without initData
+    if (!user) {
+      const lots = await listLots();
+      return res.json({ lots, viewOnly: true });
+    }
+
     const ok = await checkSubscription(user.id);
     if (!ok) return res.status(403).json({ error: "NOT_SUBSCRIBED" });
 
     const lots = await listLots();
-    res.json({ lots });
+    res.json({ lots, viewOnly: false });
   } catch (e) {
     res.status(401).json({ error: String(e.message || e) });
   }
@@ -56,11 +63,18 @@ app.get("/lots", async (req, res) => {
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
+
+    // ✅ Desktop / browser fallback: allow VIEW without initData
+    if (!user) {
+      const lot = await getLot(req.params.id);
+      return res.json({ lot, viewOnly: true });
+    }
+
     const ok = await checkSubscription(user.id);
     if (!ok) return res.status(403).json({ error: "NOT_SUBSCRIBED" });
 
     const lot = await getLot(req.params.id);
-    res.json({ lot });
+    res.json({ lot, viewOnly: false });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
   }
@@ -68,7 +82,7 @@ app.get("/lots/:id", async (req, res) => {
 
 app.post("/lots/:id/bid", async (req, res) => {
   try {
-    const user = authFromInitData(req);
+    const user = authFromInitData(req);if (!user) return res.status(401).json({ error: "BID_REQUIRES_TELEGRAM" });
     const ok = await checkSubscription(user.id);
     if (!ok) return res.status(403).json({ error: "NOT_SUBSCRIBED" });
 
