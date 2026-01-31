@@ -136,13 +136,11 @@ useEffect(() => {
 
 
 
-ws.onclose = () => setWsState("closed");
 
 
 
-    ws.onopen = () => ws.send(JSON.stringify({ type: "JOIN_LOT", lotId }));
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
+
+   
 
      
 
@@ -181,10 +179,8 @@ ws.onclose = () => setWsState("closed");
       }
     };
 
-    ws.onerror = () => setErr("Помилка з’єднання (WS).");
-    return () => ws.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lotId, wsUrl, me?.id]);
+    
+
 
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -263,11 +259,7 @@ ws.onclose = () => setWsState("closed");
         Завантаження... v-777
       </div>
 
-      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-        WS URL: {wsUrl || "EMPTY"} <br />
-        WS state: {wsState} <br />
-        API: {process.env.NEXT_PUBLIC_API_BASE || "EMPTY"}
-      </div>
+      
 
       {err && (
         <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
