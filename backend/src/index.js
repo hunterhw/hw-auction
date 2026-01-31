@@ -1,3 +1,4 @@
+import { listLots, getLot, placeBid, createLot } from "./auction.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
