@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
-
 function fmtTime(msLeft) {
   const s = Math.max(0, Math.floor(msLeft / 1000));
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
@@ -29,8 +28,19 @@ export default function LotPage({ params }) {
   const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
   const [me, setMe] = useState({ id: null, name: "Ви" });
- 
 
+  const [toasts, setToasts] = useState([]);
+  const toastId = useRef(0);
+
+  const [outbid, setOutbid] = useState(false);
+  const outbidTimer = useRef(null);
+
+  const prevRef = useRef({ leaderUserId: null, topBidId: null });
+
+  const initLen =
+    typeof window === "undefined"
+      ? 0
+      : (window?.Telegram?.WebApp?.initData || "").length;
 
   const isDesktopView = useMemo(() => {
     if (typeof window === "undefined") return false;
@@ -40,128 +50,55 @@ export default function LotPage({ params }) {
     );
   }, []);
 
-  const [toasts, setToasts] = useState([]);
-  const toastId = useRef(0);
-
-  const [outbid, setOutbid] = useState(false);
-  const outbidTimer = useRef(null);
-
-  
-
+  // Telegram ready + user
   useEffect(() => {
     tgReady();
     const u = window?.Telegram?.WebApp?.initDataUnsafe?.user;
     if (u?.id) {
       setMe({
         id: String(u.id),
-        name: u.username ? `@${u.username}` : (u.first_name || "Ви"),
+        name: u.username ? `@${u.username}` : u.first_name || "Ви",
       });
     }
   }, []);
-const prevRef = useRef({ leaderUserId: null, topBidId: null });
 
-useEffect(() => {
-  let alive = true;
-
-  async function load() {
-    try {
-      const r = await apiGet(`/lots/${lotId}`);
-      if (!alive) return;
-
-      if (r?.error) {
-        setErr(`Помилка: ${r.error}`);
-        return;
-      }
-
-      const nextLot = r?.lot || null;
-      const nextBids = (r?.bids || r?.lot?.bids || []);
-
-      if (!nextLot) {
-        setErr("Лот не знайдено.");
-        return;
-      }
-
-      // toast по новой ставке
-      const newTopBid = nextBids[0] || null;
-      if (newTopBid?.id && newTopBid.id !== prevRef.current.topBidId) {
-        const id = ++toastId.current;
-        const text = `${newTopBid.userName} поставив ₴${newTopBid.amount}`;
-        setToasts((t) => [{ id, text }, ...t].slice(0, 3));
-        setTimeout(() => {
-          setToasts((t) => t.filter((x) => x.id !== id));
-        }, 2200);
-
-        prevRef.current.topBidId = newTopBid.id;
-      }
-
-      // если тебя перебили
-      const prevLeader = prevRef.current.leaderUserId
-        ? String(prevRef.current.leaderUserId)
-        : null;
-      const newLeader = nextLot.leaderUserId ? String(nextLot.leaderUserId) : null;
-
-      if (me?.id && prevLeader === String(me.id) && newLeader && newLeader !== String(me.id)) {
-        setOutbid(true);
-        haptic("notification", "warning");
-        haptic("impact", "heavy");
-
-        if (outbidTimer.current) clearTimeout(outbidTimer.current);
-        outbidTimer.current = setTimeout(() => setOutbid(false), 2500);
-      }
-
-      prevRef.current.leaderUserId = nextLot.leaderUserId || null;
-
-      setLot(nextLot);
-      setBids(nextBids);
-      setErr("");
-    } catch (e) {
-      setErr("Помилка з’єднання (API).");
-    }
-  }
-
-  load();
-  const t = setInterval(load, 1000);
-
-  return () => {
-    alive = false;
-    clearInterval(t);
-  };
-}, [lotId, me?.id]);
-
-  
+  // Polling instead of WebSocket
   useEffect(() => {
-    setErr("");
-   
+    let alive = true;
 
+    async function load() {
+      try {
+        const r = await apiGet(`/lots/${lotId}`);
+        if (!alive) return;
 
+        if (r?.error) {
+          setErr(`Помилка: ${r.error}`);
+          return;
+        }
 
+        const nextLot = r?.lot || null;
+        const nextBids = r?.bids || r?.lot?.bids || [];
 
+        if (!nextLot) {
+          setErr("Лот не знайдено.");
+          return;
+        }
 
-
-
-
-   
-
-     
-
-      if (msg.type === "BID_PLACED") {
-        const prevLeader = lot?.leaderUserId ? String(lot.leaderUserId) : null;
-
-        setLot(msg.lot);
-        setBids((prev) => [msg.bid, ...prev].slice(0, 50));
-
-        // toast
-        const id = ++toastId.current;
-        const text = `${msg.bid.userName} поставив ₴${msg.bid.amount}`;
-        setToasts((t) => [{ id, text }, ...t].slice(0, 3));
-        setTimeout(() => {
-          setToasts((t) => t.filter((x) => x.id !== id));
-        }, 2200);
+        // toast: only when top bid changed
+        const newTopBid = nextBids[0] || null;
+        if (newTopBid?.id && newTopBid.id !== prevRef.current.topBidId) {
+          const id = ++toastId.current;
+          const text = `${newTopBid.userName} поставив ₴${newTopBid.amount}`;
+          setToasts((t) => [{ id, text }, ...t].slice(0, 3));
+          setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2200);
+          prevRef.current.topBidId = newTopBid.id;
+        }
 
         // outbid + haptic
-        const newLeader = msg.lot?.leaderUserId
-          ? String(msg.lot.leaderUserId)
+        const prevLeader = prevRef.current.leaderUserId
+          ? String(prevRef.current.leaderUserId)
           : null;
+        const newLeader = nextLot.leaderUserId ? String(nextLot.leaderUserId) : null;
 
         if (
           me?.id &&
@@ -176,12 +113,27 @@ useEffect(() => {
           if (outbidTimer.current) clearTimeout(outbidTimer.current);
           outbidTimer.current = setTimeout(() => setOutbid(false), 2500);
         }
+
+        prevRef.current.leaderUserId = nextLot.leaderUserId || null;
+
+        setLot(nextLot);
+        setBids(nextBids);
+        setErr("");
+      } catch (e) {
+        setErr("Помилка з’єднання (API).");
       }
+    }
+
+    load();
+    const t = setInterval(load, 1000);
+
+    return () => {
+      alive = false;
+      clearInterval(t);
     };
+  }, [lotId, me?.id]);
 
-    
-
-
+  // timer tick (countdown)
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 250);
@@ -247,30 +199,21 @@ useEffect(() => {
     bid(amount);
   }
 
-  const initLen =
-    typeof window === "undefined"
-      ? 0
-      : (window?.Telegram?.WebApp?.initData || "").length;
-
   if (!lot) {
-  return (
-    <div style={{ padding: 16, fontFamily: "system-ui" }}>
-      <div style={{ fontWeight: 900 }}>
-        Завантаження... v-777
-      </div>
-
-      
-
-      {err && (
-        <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
-          {err}
+    return (
+      <div style={{ padding: 16, fontFamily: "system-ui" }}>
+        <div style={{ fontWeight: 900 }}>Завантаження...</div>
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+          initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
         </div>
-      )}
-    </div>
-  );
-}
-
-
+        {err && (
+          <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
+            {err}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -296,9 +239,7 @@ useEffect(() => {
 
       <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>
-  {lot.title} <span style={{ fontSize: 12, opacity: 0.6 }}>v-test-1</span>
-</div>
+          <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
           <div
             style={{
               padding: "6px 10px",
