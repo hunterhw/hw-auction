@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiPost } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
 
@@ -58,16 +58,83 @@ export default function LotPage({ params }) {
       });
     }
   }, []);
+const prevRef = useRef({ leaderUserId: null, topBidId: null });
 
+useEffect(() => {
+  let alive = true;
+
+  async function load() {
+    try {
+      const r = await apiGet(`/lots/${lotId}`);
+      if (!alive) return;
+
+      if (r?.error) {
+        setErr(`Помилка: ${r.error}`);
+        return;
+      }
+
+      const nextLot = r?.lot || null;
+      const nextBids = (r?.bids || r?.lot?.bids || []);
+
+      if (!nextLot) {
+        setErr("Лот не знайдено.");
+        return;
+      }
+
+      // toast по новой ставке
+      const newTopBid = nextBids[0] || null;
+      if (newTopBid?.id && newTopBid.id !== prevRef.current.topBidId) {
+        const id = ++toastId.current;
+        const text = `${newTopBid.userName} поставив ₴${newTopBid.amount}`;
+        setToasts((t) => [{ id, text }, ...t].slice(0, 3));
+        setTimeout(() => {
+          setToasts((t) => t.filter((x) => x.id !== id));
+        }, 2200);
+
+        prevRef.current.topBidId = newTopBid.id;
+      }
+
+      // если тебя перебили
+      const prevLeader = prevRef.current.leaderUserId
+        ? String(prevRef.current.leaderUserId)
+        : null;
+      const newLeader = nextLot.leaderUserId ? String(nextLot.leaderUserId) : null;
+
+      if (me?.id && prevLeader === String(me.id) && newLeader && newLeader !== String(me.id)) {
+        setOutbid(true);
+        haptic("notification", "warning");
+        haptic("impact", "heavy");
+
+        if (outbidTimer.current) clearTimeout(outbidTimer.current);
+        outbidTimer.current = setTimeout(() => setOutbid(false), 2500);
+      }
+
+      prevRef.current.leaderUserId = nextLot.leaderUserId || null;
+
+      setLot(nextLot);
+      setBids(nextBids);
+      setErr("");
+    } catch (e) {
+      setErr("Помилка з’єднання (API).");
+    }
+  }
+
+  load();
+  const t = setInterval(load, 1000);
+
+  return () => {
+    alive = false;
+    clearInterval(t);
+  };
+}, [lotId, me?.id]);
+
+  
   useEffect(() => {
     setErr("");
     setWsState("connecting");
-const ws = new WebSocket(wsUrl);
 
-ws.onopen = () => {
-  setWsState("open");
-  ws.send(JSON.stringify({ type: "JOIN_LOT", lotId }));
-};
+
+
 
 ws.onclose = () => setWsState("closed");
 
@@ -77,10 +144,7 @@ ws.onclose = () => setWsState("closed");
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
 
-      if (msg.type === "SNAPSHOT") {
-        setLot(msg.lot);
-        setBids(msg.lot?.bids || []);
-      }
+     
 
       if (msg.type === "BID_PLACED") {
         const prevLeader = lot?.leaderUserId ? String(lot.leaderUserId) : null;
