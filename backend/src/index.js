@@ -1,14 +1,14 @@
-import { listLots, getLot, placeBid, createLot } from "./auction.js";
-import path from "path";
-import { fileURLToPath } from "url";
-import fs from "fs";
-import adminRouter from "./admin.js";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { WebSocketServer } from "ws";
 
-import { listLots, getLot, placeBid } from "./auction.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+
+import adminRouter from "./admin.js";
+import { listLots, getLot, placeBid, createLot } from "./auction.js";
 import { verifyTelegramInitData, parseUserFromInitData } from "./telegram.js";
 
 const app = express();
@@ -23,7 +23,10 @@ app.use(
 );
 app.options("*", cors());
 
-app.use(express.json());
+// json
+app.use(express.json({ limit: "5mb" }));
+
+// paths
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -34,7 +37,7 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // роздача завантажених файлів
 app.use("/uploads", express.static(uploadsDir));
 
-// адмін роутер
+// адмін роутер (если у тебя там уже есть /admin/upload и т.д.)
 app.use("/admin", adminRouter);
 
 const PORT = process.env.PORT || 8080;
@@ -98,6 +101,7 @@ function normalizeLotPayload(rawLot) {
 // --- routes ---
 app.get("/health", (_, res) => res.json({ ok: true }));
 
+// список лотов
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -109,7 +113,6 @@ app.get("/lots", async (req, res) => {
     // Telegram: подписка
     const sub = await checkSubscription(user.id);
     if (!sub.ok) {
-      // лог для дебага
       console.warn("NOT_SUBSCRIBED / SUB_CHECK_FAIL:", {
         userId: user.id,
         status: sub.status,
@@ -133,6 +136,7 @@ app.get("/lots", async (req, res) => {
   }
 });
 
+// один лот + ставки
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -170,6 +174,7 @@ app.get("/lots/:id", async (req, res) => {
   }
 });
 
+// ставка
 app.post("/lots/:id/bid", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -210,31 +215,41 @@ app.post("/lots/:id/bid", async (req, res) => {
     return res.status(400).json({ error: String(e?.message || e) });
   }
 });
-// ===== ADMIN =====
+
+// ===== ADMIN: создать лот =====
+// ВАЖНО: добавь ADMIN_KEY в Render env
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 
 app.post("/admin/lots", async (req, res) => {
   try {
     const { adminKey, title, imageUrl, startPrice, bidStep, durationMin } = req.body || {};
 
-    if (!ADMIN_KEY || adminKey !== ADMIN_KEY) {
+    if (!ADMIN_KEY || String(adminKey || "") !== String(ADMIN_KEY)) {
       return res.status(401).json({ error: "ADMIN_DENIED" });
     }
 
+    const sp = Number(startPrice);
+    const bs = Number(bidStep);
+    const dm = Number(durationMin || 60);
+
+    if (!title || !Number.isFinite(sp) || !Number.isFinite(bs) || !Number.isFinite(dm)) {
+      return res.status(400).json({ error: "BAD_PAYLOAD" });
+    }
+
     const now = new Date();
-    const endsAt = new Date(now.getTime() + Number(durationMin || 60) * 60 * 1000);
+    const endsAt = new Date(now.getTime() + dm * 60 * 1000);
 
-    // ВАЖНО: placeBid/getLot/listLots у тебя уже работают через DB.
-    // Поэтому тут вызываем placeBid/auction слой НЕ НАДО.
-    // Сделай в auction.js функцию createLot и используй ее.
-    // Ниже — вариант через prisma напрямую, если prisma уже есть в auction.js.
+    const lot = await createLot({
+      title: String(title),
+      imageUrl: String(imageUrl || ""),
+      startPrice: sp,
+      bidStep: bs,
+      endsAt,
+    });
 
-    // 1) Если у тебя в auction.js уже есть prisma — добавь там export createLot(...)
-    // 2) Здесь вызови createLot(...)
-
-    return res.status(500).json({ error: "ADD_CREATELOT_IN_AUCTION_JS" });
+    return res.json({ ok: true, lot });
   } catch (e) {
-    console.error(e);
+    console.error("ADMIN CREATE LOT ERROR:", e);
     return res.status(500).json({ error: "SERVER_ERROR" });
   }
 });
@@ -287,11 +302,6 @@ wss.on("connection", (ws) => {
     } catch {}
   });
 
-  ws.on("close", () => {
-    removeWsFromAllRooms(ws);
-  });
-
-  ws.on("error", () => {
-    removeWsFromAllRooms(ws);
-  });
+  ws.on("close", () => removeWsFromAllRooms(ws));
+  ws.on("error", () => removeWsFromAllRooms(ws));
 });
