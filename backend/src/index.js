@@ -43,6 +43,49 @@ app.get("/health", (_, res) => res.json({ ok: true }));
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
+// Отримати один лот + ставки (для polling)
+app.get("/lots/:id", async (req, res) => {
+  try {
+    const lotId = String(req.params.id);
+
+    const lot = await prisma.lot.findUnique({
+      where: { id: lotId },
+      include: {
+        bids: {
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        },
+      },
+    });
+
+    if (!lot) {
+      return res.status(404).json({ error: "LOT_NOT_FOUND" });
+    }
+
+    res.json({
+      lot: {
+        id: lot.id,
+        title: lot.title,
+        imageUrl: lot.imageUrl,
+        currentPrice: lot.currentPrice,
+        bidStep: lot.bidStep,
+        endsAt: lot.endsAt,
+        status: lot.status,
+        leaderUserId: lot.leaderUserId,
+      },
+      bids: lot.bids.map((b) => ({
+        id: b.id,
+        userId: b.userId,
+        userName: b.userName,
+        amount: b.amount,
+        createdAt: b.createdAt,
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "SERVER_ERROR" });
+  }
+});
 
     // ✅ Desktop / browser fallback: allow VIEW without initData
     if (!user) {
