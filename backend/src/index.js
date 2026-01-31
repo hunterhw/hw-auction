@@ -1,3 +1,4 @@
+import { telegramWebhook } from "./telegram_bot.js";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
