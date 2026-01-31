@@ -46,6 +46,57 @@ app.get("/lots", async (req, res) => {
 // Отримати один лот + ставки (для polling)
 app.get("/lots/:id", async (req, res) => {
   try {
+    const id = req.params.id;
+
+    console.log("GET LOT:", id); // для дебага
+
+    const lot = await prisma.lot.findFirst({
+      where: {
+        id: id,
+      },
+      include: {
+        bids: {
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        },
+      },
+    });
+
+    if (!lot) {
+      return res.json({
+        lot: null,
+        viewOnly: true,
+        reason: "NOT_FOUND",
+      });
+    }
+
+    res.json({
+      lot: {
+        id: lot.id,
+        title: lot.title,
+        imageUrl: lot.imageUrl,
+        currentPrice: lot.currentPrice,
+        bidStep: lot.bidStep,
+        endsAt: lot.endsAt,
+        status: lot.status,
+        leaderUserId: lot.leaderUserId,
+      },
+      bids: lot.bids.map((b) => ({
+        id: b.id,
+        userId: b.userId,
+        userName: b.userName,
+        amount: b.amount,
+        createdAt: b.createdAt,
+      })),
+      viewOnly: true,
+    });
+  } catch (e) {
+    console.error("LOT ERROR:", e);
+    res.status(500).json({ error: "SERVER_ERROR" });
+  }
+});
+
+  try {
     const lotId = String(req.params.id);
 
     const lot = await prisma.lot.findUnique({
