@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
@@ -239,6 +240,37 @@ export default function LotPage({ params }) {
 
   return (
     <>
+      {/* ✅ ШАПКА С КНОПКОЙ НАЗАД */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          padding: "12px 14px",
+          background: "#0b0b0b",
+          borderBottom: "1px solid #222",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Link
+          href="/"
+          style={{
+            position: "absolute",
+            left: 14,
+            textDecoration: "none",
+            color: "white",
+            fontWeight: 900,
+            fontSize: 16,
+          }}
+        >
+          ← Назад
+        </Link>
+
+        <div style={{ fontWeight: 900, opacity: 0.85 }}>Усі аукціони</div>
+      </div>
+
       <div style={{ fontSize: 12, opacity: 0.7, margin: "8px 14px 0" }}>
         initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
       </div>
