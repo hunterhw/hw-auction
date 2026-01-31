@@ -21,12 +21,25 @@ function haptic(type = "impact", style = "medium") {
   } catch {}
 }
 
+function openSubscribe(url) {
+  if (!url) return;
+  try {
+    if (window?.Telegram?.WebApp?.openTelegramLink) {
+      window.Telegram.WebApp.openTelegramLink(url);
+      return;
+    }
+  } catch {}
+  window.open(url, "_blank");
+}
+
 export default function LotPage({ params }) {
   const lotId = params.id;
 
   const [lot, setLot] = useState(null);
   const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
+  const [subscribeUrl, setSubscribeUrl] = useState(null);
+
   const [me, setMe] = useState({ id: null, name: "Ви" });
 
   const [toasts, setToasts] = useState([]);
@@ -37,36 +50,19 @@ export default function LotPage({ params }) {
 
   const prevRef = useRef({ leaderUserId: null, topBidId: null });
 
-  // ✅ live debug values (update after mount)
-  const [dbg, setDbg] = useState({
-    hasTG: false,
-    initLen: 0,
-    userId: null,
-    href: "",
-    apiBase: process.env.NEXT_PUBLIC_API_BASE || "",
-  });
-
-  useEffect(() => {
-    const tg = window?.Telegram?.WebApp;
-    const initLen = (tg?.initData || "").length;
-    const userId = tg?.initDataUnsafe?.user?.id || null;
-
-    setDbg({
-      hasTG: !!tg,
-      initLen,
-      userId,
-      href: window.location.href,
-      apiBase: process.env.NEXT_PUBLIC_API_BASE || "",
-    });
-  }, []);
+  const initLen =
+    typeof window === "undefined"
+      ? 0
+      : (window?.Telegram?.WebApp?.initData || "").length;
 
   const isDesktopView = useMemo(() => {
     if (typeof window === "undefined") return false;
-    const tg = window?.Telegram?.WebApp;
-    return !(tg?.initData && tg.initData.length > 0);
-  }, [dbg.initLen]); // зависит от dbg.initLen чтобы пересчиталось
+    return !(
+      window?.Telegram?.WebApp?.initData &&
+      window.Telegram.WebApp.initData.length > 0
+    );
+  }, []);
 
-  // Telegram ready + user
   useEffect(() => {
     tgReady();
     const u = window?.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -78,7 +74,7 @@ export default function LotPage({ params }) {
     }
   }, []);
 
-  // Polling instead of WebSocket
+  // Polling
   useEffect(() => {
     let alive = true;
 
@@ -87,20 +83,25 @@ export default function LotPage({ params }) {
         const r = await apiGet(`/lots/${lotId}`);
         if (!alive) return;
 
-        if (r?.error) {
-          setErr(`Помилка: ${r.error}`);
-          return;
+        // если backend прислал запрет подписки
+        if (r?.error === "NOT_SUBSCRIBED") {
+          setSubscribeUrl(r.subscribeUrl || null);
+          setErr("NOT_SUBSCRIBED");
+        } else {
+          setSubscribeUrl(null);
+          setErr(r?.error ? String(r.error) : "");
         }
 
         const nextLot = r?.lot || null;
         const nextBids = r?.bids || r?.lot?.bids || [];
 
         if (!nextLot) {
-          setErr("Лот не знайдено.");
+          setLot(null);
+          setBids([]);
           return;
         }
 
-        // toast: only when top bid changed
+        // toast when top bid changed
         const newTopBid = nextBids[0] || null;
         if (newTopBid?.id && newTopBid.id !== prevRef.current.topBidId) {
           const id = ++toastId.current;
@@ -116,7 +117,12 @@ export default function LotPage({ params }) {
           : null;
         const newLeader = nextLot.leaderUserId ? String(nextLot.leaderUserId) : null;
 
-        if (me?.id && prevLeader === String(me.id) && newLeader && newLeader !== String(me.id)) {
+        if (
+          me?.id &&
+          prevLeader === String(me.id) &&
+          newLeader &&
+          newLeader !== String(me.id)
+        ) {
           setOutbid(true);
           haptic("notification", "warning");
           haptic("impact", "heavy");
@@ -129,7 +135,6 @@ export default function LotPage({ params }) {
 
         setLot(nextLot);
         setBids(nextBids);
-        setErr("");
       } catch (e) {
         setErr("Помилка з’єднання (API).");
       }
@@ -144,7 +149,7 @@ export default function LotPage({ params }) {
     };
   }, [lotId, me?.id]);
 
-  // timer tick (countdown)
+  // timer tick
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 250);
@@ -182,12 +187,16 @@ export default function LotPage({ params }) {
     setErr("");
     const r = await apiPost(`/lots/${lotId}/bid`, { amount });
 
+    if (r?.error === "NOT_SUBSCRIBED") {
+      setSubscribeUrl(r.subscribeUrl || null);
+      setErr("NOT_SUBSCRIBED");
+      return;
+    }
+
     if (r?.error) {
       if (String(r.error).startsWith("MIN_BID_")) {
         const min = String(r.error).replace("MIN_BID_", "");
         setErr(`Мінімальна наступна ставка: ₴${min}`);
-      } else if (r.error === "NOT_SUBSCRIBED") {
-        setErr("Потрібна підписка на канал @hw_hunter_ua");
       } else if (r.error === "BID_REQUIRES_TELEGRAM") {
         setErr("Ставки доступні лише з телефону в Telegram (Mini App).");
       } else {
@@ -210,49 +219,79 @@ export default function LotPage({ params }) {
     bid(amount);
   }
 
-  // ✅ LOADING screen WITH DEBUG (you will always see it)
   if (!lot) {
     return (
-      <div style={{ padding: 16, fontFamily: "system-ui", color: "white" }}>
-        <div style={{ fontWeight: 900, fontSize: 18 }}>Завантаження...</div>
-
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85, lineHeight: 1.5 }}>
-          TG: {String(dbg.hasTG)} <br />
-          initLen: {dbg.initLen} <br />
-          userId: {dbg.userId || "none"} <br />
-          me.id: {me?.id || "none"} <br />
-          API: {dbg.apiBase || "EMPTY"} <br />
-          href: <span style={{ wordBreak: "break-all" }}>{dbg.href || "-"}</span>
+      <div style={{ padding: 16, fontFamily: "system-ui" }}>
+        <div style={{ fontWeight: 900 }}>Завантаження...</div>
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+          initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
         </div>
-
         {err && (
-          <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>
-            {err}
+          <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
+            {String(err)}
           </div>
         )}
       </div>
     );
   }
 
+  const showSubscribe = err === "NOT_SUBSCRIBED";
+
   return (
     <>
       <div style={{ fontSize: 12, opacity: 0.7, margin: "8px 14px 0" }}>
-        initData: {dbg.initLen > 0 ? `OK (${dbg.initLen})` : "EMPTY"}
+        initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
       </div>
 
-      {isDesktopView && (
+      {showSubscribe && (
         <div
           style={{
             margin: "10px 14px 0",
-            padding: "10px",
-            background: "#111",
-            borderRadius: "10px",
-            color: "#fff",
-            textAlign: "center",
-            fontWeight: "bold",
+            padding: "12px",
+            background: "#1a1111",
+            border: "1px solid #3a1f1f",
+            borderRadius: 12,
+            color: "white",
           }}
         >
-          Режим перегляду. Ставки доступні лише з телефону.
+          <div style={{ fontWeight: 900, fontSize: 16 }}>
+            Щоб робити ставки — потрібна підписка на канал
+          </div>
+          <div style={{ marginTop: 6, opacity: 0.8, fontSize: 13 }}>
+            Підпишись і повернись сюди — все запрацює.
+          </div>
+
+          <button
+            onClick={() => openSubscribe(subscribeUrl)}
+            style={{
+              marginTop: 10,
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #333",
+              fontWeight: 900,
+              background: "#3e88f7",
+              color: "white",
+            }}
+          >
+            ПІДПИСАТИСЬ
+          </button>
+
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #333",
+              fontWeight: 900,
+              background: "#111",
+              color: "white",
+            }}
+          >
+            Я ВЖЕ ПІДПИСАВСЯ — ОНОВИТИ
+          </button>
         </div>
       )}
 
@@ -368,21 +407,21 @@ export default function LotPage({ params }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
           <button
             onClick={() => quickBid(10)}
-            disabled={lot.status !== "LIVE" || isDesktopView}
+            disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
             style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
           >
             +₴10
           </button>
           <button
             onClick={() => quickBid(20)}
-            disabled={lot.status !== "LIVE" || isDesktopView}
+            disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
             style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
           >
             +₴20
           </button>
           <button
             onClick={() => quickBid(50)}
-            disabled={lot.status !== "LIVE" || isDesktopView}
+            disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
             style={{ padding: "12px 10px", borderRadius: 14, border: "1px solid #333", fontWeight: 900 }}
           >
             +₴50
@@ -391,7 +430,7 @@ export default function LotPage({ params }) {
 
         <button
           onClick={() => bid(nextMin)}
-          disabled={lot.status !== "LIVE" || isDesktopView}
+          disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
           style={{
             marginTop: 10,
             width: "100%",
@@ -405,7 +444,11 @@ export default function LotPage({ params }) {
           ЗРОБИТИ СТАВКУ ₴{nextMin}
         </button>
 
-        {err && <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>{err}</div>}
+        {err && err !== "NOT_SUBSCRIBED" && (
+          <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>
+            {String(err)}
+          </div>
+        )}
 
         <div style={{ marginTop: 14 }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>Історія ставок</div>
