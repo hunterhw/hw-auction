@@ -37,18 +37,34 @@ export default function LotPage({ params }) {
 
   const prevRef = useRef({ leaderUserId: null, topBidId: null });
 
-  const initLen =
-    typeof window === "undefined"
-      ? 0
-      : (window?.Telegram?.WebApp?.initData || "").length;
+  // ✅ live debug values (update after mount)
+  const [dbg, setDbg] = useState({
+    hasTG: false,
+    initLen: 0,
+    userId: null,
+    href: "",
+    apiBase: process.env.NEXT_PUBLIC_API_BASE || "",
+  });
+
+  useEffect(() => {
+    const tg = window?.Telegram?.WebApp;
+    const initLen = (tg?.initData || "").length;
+    const userId = tg?.initDataUnsafe?.user?.id || null;
+
+    setDbg({
+      hasTG: !!tg,
+      initLen,
+      userId,
+      href: window.location.href,
+      apiBase: process.env.NEXT_PUBLIC_API_BASE || "",
+    });
+  }, []);
 
   const isDesktopView = useMemo(() => {
     if (typeof window === "undefined") return false;
-    return !(
-      window?.Telegram?.WebApp?.initData &&
-      window.Telegram.WebApp.initData.length > 0
-    );
-  }, []);
+    const tg = window?.Telegram?.WebApp;
+    return !(tg?.initData && tg.initData.length > 0);
+  }, [dbg.initLen]); // зависит от dbg.initLen чтобы пересчиталось
 
   // Telegram ready + user
   useEffect(() => {
@@ -100,12 +116,7 @@ export default function LotPage({ params }) {
           : null;
         const newLeader = nextLot.leaderUserId ? String(nextLot.leaderUserId) : null;
 
-        if (
-          me?.id &&
-          prevLeader === String(me.id) &&
-          newLeader &&
-          newLeader !== String(me.id)
-        ) {
+        if (me?.id && prevLeader === String(me.id) && newLeader && newLeader !== String(me.id)) {
           setOutbid(true);
           haptic("notification", "warning");
           haptic("impact", "heavy");
@@ -199,15 +210,23 @@ export default function LotPage({ params }) {
     bid(amount);
   }
 
+  // ✅ LOADING screen WITH DEBUG (you will always see it)
   if (!lot) {
     return (
-      <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        <div style={{ fontWeight: 900 }}>Завантаження...</div>
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-          initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
+      <div style={{ padding: 16, fontFamily: "system-ui", color: "white" }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Завантаження...</div>
+
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85, lineHeight: 1.5 }}>
+          TG: {String(dbg.hasTG)} <br />
+          initLen: {dbg.initLen} <br />
+          userId: {dbg.userId || "none"} <br />
+          me.id: {me?.id || "none"} <br />
+          API: {dbg.apiBase || "EMPTY"} <br />
+          href: <span style={{ wordBreak: "break-all" }}>{dbg.href || "-"}</span>
         </div>
+
         {err && (
-          <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
+          <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>
             {err}
           </div>
         )}
@@ -218,7 +237,7 @@ export default function LotPage({ params }) {
   return (
     <>
       <div style={{ fontSize: 12, opacity: 0.7, margin: "8px 14px 0" }}>
-        initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
+        initData: {dbg.initLen > 0 ? `OK (${dbg.initLen})` : "EMPTY"}
       </div>
 
       {isDesktopView && (
