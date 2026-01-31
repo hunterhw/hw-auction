@@ -23,6 +23,7 @@ async function checkSubscription(userId) {
   const url =
     `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?` +
     `chat_id=${encodeURIComponent(CHANNEL_ID)}&user_id=${encodeURIComponent(userId)}`;
+
   const res = await fetch(url);
   const data = await res.json();
   const status = data?.result?.status;
@@ -40,105 +41,12 @@ function authFromInitData(req) {
 
 app.get("/health", (_, res) => res.json({ ok: true }));
 
+// ✅ LIST lots
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
-// Отримати один лот + ставки (для polling)
-app.get("/lots/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
 
-    console.log("GET LOT:", id); // для дебага
-
-    const lot = await prisma.lot.findFirst({
-      where: {
-        id: id,
-      },
-      include: {
-        bids: {
-          orderBy: { createdAt: "desc" },
-          take: 50,
-        },
-      },
-    });
-
-    if (!lot) {
-      return res.json({
-        lot: null,
-        viewOnly: true,
-        reason: "NOT_FOUND",
-      });
-    }
-
-    res.json({
-      lot: {
-        id: lot.id,
-        title: lot.title,
-        imageUrl: lot.imageUrl,
-        currentPrice: lot.currentPrice,
-        bidStep: lot.bidStep,
-        endsAt: lot.endsAt,
-        status: lot.status,
-        leaderUserId: lot.leaderUserId,
-      },
-      bids: lot.bids.map((b) => ({
-        id: b.id,
-        userId: b.userId,
-        userName: b.userName,
-        amount: b.amount,
-        createdAt: b.createdAt,
-      })),
-      viewOnly: true,
-    });
-  } catch (e) {
-    console.error("LOT ERROR:", e);
-    res.status(500).json({ error: "SERVER_ERROR" });
-  }
-});
-
-  try {
-    const lotId = String(req.params.id);
-
-    const lot = await prisma.lot.findUnique({
-      where: { id: lotId },
-      include: {
-        bids: {
-          orderBy: { createdAt: "desc" },
-          take: 50,
-        },
-      },
-    });
-
-    if (!lot) {
-      return res.status(404).json({ error: "LOT_NOT_FOUND" });
-    }
-
-    res.json({
-      lot: {
-        id: lot.id,
-        title: lot.title,
-        imageUrl: lot.imageUrl,
-        currentPrice: lot.currentPrice,
-        bidStep: lot.bidStep,
-        endsAt: lot.endsAt,
-        status: lot.status,
-        leaderUserId: lot.leaderUserId,
-      },
-      bids: lot.bids.map((b) => ({
-        id: b.id,
-        userId: b.userId,
-        userName: b.userName,
-        amount: b.amount,
-        createdAt: b.createdAt,
-      })),
-    });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "SERVER_ERROR" });
-  }
-});
-
-    // ✅ Desktop / browser fallback: allow VIEW without initData
+    // Desktop/browser: allow view
     if (!user) {
       const lots = await listLots();
       return res.json({ lots, viewOnly: true });
@@ -148,17 +56,18 @@ app.get("/lots/:id", async (req, res) => {
     if (!ok) return res.status(403).json({ error: "NOT_SUBSCRIBED" });
 
     const lots = await listLots();
-    res.json({ lots, viewOnly: false });
+    return res.json({ lots, viewOnly: false });
   } catch (e) {
-    res.status(401).json({ error: String(e.message || e) });
+    return res.status(401).json({ error: String(e?.message || e) });
   }
 });
 
+// ✅ GET one lot + bids (polling)
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
 
-    // ✅ Desktop / browser fallback: allow VIEW without initData
+    // Desktop/browser: allow view
     if (!user) {
       const lot = await getLot(req.params.id);
       return res.json({ lot, viewOnly: true });
@@ -168,40 +77,44 @@ app.get("/lots/:id", async (req, res) => {
     if (!ok) return res.status(403).json({ error: "NOT_SUBSCRIBED" });
 
     const lot = await getLot(req.params.id);
-    res.json({ lot, viewOnly: false });
+    return res.json({ lot, viewOnly: false });
   } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
+    return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
+// ✅ PLACE bid
 app.post("/lots/:id/bid", async (req, res) => {
   try {
-    const user = authFromInitData(req);if (!user) return res.status(401).json({ error: "BID_REQUIRES_TELEGRAM" });
+    const user = authFromInitData(req);
+    if (!user) return res.status(401).json({ error: "BID_REQUIRES_TELEGRAM" });
+
     const ok = await checkSubscription(user.id);
     if (!ok) return res.status(403).json({ error: "NOT_SUBSCRIBED" });
 
     const { amount } = req.body || {};
     const result = await placeBid({
       lotId: req.params.id,
-      userId: user.id,
+      userId: String(user.id),
       userName: user.username ? `@${user.username}` : `${user.first_name || "Користувач"}`,
-      amount: Number(amount)
+      amount: Number(amount),
     });
 
+    // WS broadcast (optional)
     broadcastToLot(req.params.id, {
       type: "BID_PLACED",
       lotId: req.params.id,
       bid: result.bid,
-      lot: result.lot
+      lot: result.lot,
     });
 
-    res.json({ ok: true, ...result });
+    return res.json({ ok: true, ...result });
   } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
+    return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
-// --- WS ---
+// --- WS (optional) ---
 const server = app.listen(PORT, () => console.log("✅ Backend on", PORT));
 const wss = new WebSocketServer({ server });
 
