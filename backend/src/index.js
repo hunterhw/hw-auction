@@ -26,6 +26,7 @@ app.options("*", cors());
 
 // json
 app.use(express.json({ limit: "5mb" }));
+app.post("/telegram/webhook", telegramWebhook);
 
 // paths
 const __filename = fileURLToPath(import.meta.url);
