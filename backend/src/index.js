@@ -7,7 +7,17 @@ import { listLots, getLot, placeBid } from "./auction.js";
 import { verifyTelegramInitData, parseUserFromInitData } from "./telegram.js";
 
 const app = express();
-app.use(cors());
+
+// --- CORS (чуть аккуратнее для Telegram/iOS) ---
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-telegram-initdata"],
+  })
+);
+app.options("*", cors());
+
 app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
@@ -20,28 +30,40 @@ const CHANNEL_URL =
     : null);
 
 if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN is missing. Set it in backend/.env");
+  console.error("❌ BOT_TOKEN is missing. Set it in env (Render)");
   process.exit(1);
 }
 
 async function checkSubscription(userId) {
   // если канал не задан — считаем, что подписка не нужна
-  if (!CHANNEL_ID) return true;
+  if (!CHANNEL_ID) return { ok: true };
 
   const url =
     `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?` +
     `chat_id=${encodeURIComponent(CHANNEL_ID)}&user_id=${encodeURIComponent(userId)}`;
 
-  const res = await fetch(url);
-  const data = await res.json();
-  const status = data?.result?.status;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
 
-  return ["creator", "administrator", "member"].includes(status);
+    // если бот не админ/нет прав — Telegram вернет ok:false
+    if (!data?.ok) {
+      return { ok: false, reason: "TG_API_ERROR", tg: data };
+    }
+
+    const status = data?.result?.status;
+    const ok = ["creator", "administrator", "member"].includes(status);
+    return { ok, status };
+  } catch (e) {
+    return { ok: false, reason: "FETCH_ERROR", error: String(e?.message || e) };
+  }
 }
 
 function authFromInitData(req) {
   const initData = req.headers["x-telegram-initdata"];
-  if (!initData || typeof initData !== "string" || initData.length === 0) return null; // Desktop fallback
+
+  // Desktop fallback: без initData можно только смотреть
+  if (!initData || typeof initData !== "string" || initData.length === 0) return null;
 
   if (!verifyTelegramInitData(initData, BOT_TOKEN)) throw new Error("BAD_INITDATA");
   const user = parseUserFromInitData(initData);
@@ -49,31 +71,36 @@ function authFromInitData(req) {
   return user;
 }
 
-function normalizeLotPayload(lot) {
-  // на случай если getLot вернул bids внутри lot
-  if (!lot) return { lot: null, bids: [] };
-  const bids = Array.isArray(lot.bids) ? lot.bids : [];
-  const { bids: _b, ...cleanLot } = lot;
+function normalizeLotPayload(rawLot) {
+  if (!rawLot) return { lot: null, bids: [] };
+  const bids = Array.isArray(rawLot.bids) ? rawLot.bids : [];
+  const { bids: _b, ...cleanLot } = rawLot;
   return { lot: cleanLot, bids };
 }
 
+// --- routes ---
 app.get("/health", (_, res) => res.json({ ok: true }));
 
-// список лотов
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
-
     const lots = await listLots();
 
-    // Desktop/Browser: просто просмотр
-    if (!user) {
-      return res.json({ lots, viewOnly: true });
-    }
+    // browser/desktop: просмотр
+    if (!user) return res.json({ lots, viewOnly: true });
 
-    // Telegram: проверка подписки
-    const ok = await checkSubscription(user.id);
-    if (!ok) {
+    // Telegram: подписка
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      // лог для дебага
+      console.warn("NOT_SUBSCRIBED / SUB_CHECK_FAIL:", {
+        userId: user.id,
+        status: sub.status,
+        reason: sub.reason,
+        tg: sub.tg,
+        error: sub.error,
+      });
+
       return res.status(403).json({
         lots,
         viewOnly: true,
@@ -85,11 +112,10 @@ app.get("/lots", async (req, res) => {
 
     return res.json({ lots, viewOnly: false });
   } catch (e) {
-    return res.status(401).json({ error: String(e.message || e) });
+    return res.status(401).json({ error: String(e?.message || e) });
   }
 });
 
-// один лот + ставки (для polling)
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -97,18 +123,20 @@ app.get("/lots/:id", async (req, res) => {
     const rawLot = await getLot(req.params.id);
     const { lot, bids } = normalizeLotPayload(rawLot);
 
-    if (!lot) {
-      return res.json({ lot: null, bids: [], viewOnly: true, reason: "NOT_FOUND" });
-    }
+    if (!lot) return res.json({ lot: null, bids: [], viewOnly: true, reason: "NOT_FOUND" });
 
-    // Desktop/Browser: просмотр
-    if (!user) {
-      return res.json({ lot, bids, viewOnly: true });
-    }
+    // browser/desktop: просмотр
+    if (!user) return res.json({ lot, bids, viewOnly: true });
 
-    // Telegram: если нет подписки — даём просмотр, но говорим “подпишись”
-    const ok = await checkSubscription(user.id);
-    if (!ok) {
+    // Telegram: если нет подписки — можно смотреть, но писать, что нет подписки
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      console.warn("NOT_SUBSCRIBED (VIEW_ONLY):", {
+        userId: user.id,
+        status: sub.status,
+        reason: sub.reason,
+      });
+
       return res.status(403).json({
         lot,
         bids,
@@ -121,18 +149,17 @@ app.get("/lots/:id", async (req, res) => {
 
     return res.json({ lot, bids, viewOnly: false });
   } catch (e) {
-    return res.status(400).json({ error: String(e.message || e) });
+    return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
-// ставка
 app.post("/lots/:id/bid", async (req, res) => {
   try {
     const user = authFromInitData(req);
     if (!user) return res.status(401).json({ error: "BID_REQUIRES_TELEGRAM" });
 
-    const ok = await checkSubscription(user.id);
-    if (!ok) {
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
       return res.status(403).json({
         error: "NOT_SUBSCRIBED",
         subscribeUrl: CHANNEL_URL,
@@ -141,11 +168,17 @@ app.post("/lots/:id/bid", async (req, res) => {
     }
 
     const { amount } = req.body || {};
+    const numAmount = Number(amount);
+
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: "BAD_AMOUNT" });
+    }
+
     const result = await placeBid({
       lotId: req.params.id,
       userId: user.id,
       userName: user.username ? `@${user.username}` : `${user.first_name || "Користувач"}`,
-      amount: Number(amount),
+      amount: numAmount,
     });
 
     broadcastToLot(req.params.id, {
@@ -157,7 +190,7 @@ app.post("/lots/:id/bid", async (req, res) => {
 
     return res.json({ ok: true, ...result });
   } catch (e) {
-    return res.status(400).json({ error: String(e.message || e) });
+    return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
@@ -170,9 +203,22 @@ const lotRooms = new Map(); // lotId -> Set(ws)
 function broadcastToLot(lotId, payload) {
   const room = lotRooms.get(lotId);
   if (!room) return;
+
   const msg = JSON.stringify(payload);
+
   for (const ws of room) {
-    if (ws.readyState === ws.OPEN) ws.send(msg);
+    if (ws.readyState === ws.OPEN) {
+      try {
+        ws.send(msg);
+      } catch {}
+    }
+  }
+}
+
+function removeWsFromAllRooms(ws) {
+  for (const [lotId, room] of lotRooms.entries()) {
+    room.delete(ws);
+    if (room.size === 0) lotRooms.delete(lotId);
   }
 }
 
@@ -180,19 +226,27 @@ wss.on("connection", (ws) => {
   ws.on("message", async (raw) => {
     try {
       const data = JSON.parse(raw.toString());
+
       if (data?.type === "JOIN_LOT") {
-        const lotId = data.lotId;
+        const lotId = String(data.lotId || "");
+        if (!lotId) return;
+
         if (!lotRooms.has(lotId)) lotRooms.set(lotId, new Set());
         lotRooms.get(lotId).add(ws);
 
         const rawLot = await getLot(lotId);
         const { lot, bids } = normalizeLotPayload(rawLot);
+
         ws.send(JSON.stringify({ type: "SNAPSHOT", lot, bids }));
       }
     } catch {}
   });
 
   ws.on("close", () => {
-    for (const room of lotRooms.values()) room.delete(ws);
+    removeWsFromAllRooms(ws);
+  });
+
+  ws.on("error", () => {
+    removeWsFromAllRooms(ws);
   });
 });
