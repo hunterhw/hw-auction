@@ -1,51 +1,48 @@
-export function tgReady() {
-  try {
-    const tg = window?.Telegram?.WebApp;
-    tg?.ready?.();
-    tg?.expand?.();
-  } catch {}
-}
-
-// берём initData из #tgWebAppData
-function readInitDataFromHash() {
-  try {
-    if (typeof window === "undefined") return "";
-
-    const hash = window.location.hash || "";
-
-    if (!hash.startsWith("#tgWebAppData=")) return "";
-
-    const raw = hash.replace("#tgWebAppData=", "");
-    const first = raw.split("&")[0];
-
-    return decodeURIComponent(first);
-  } catch {
-    return "";
-  }
-}
-
 export function getInitData() {
   if (typeof window === "undefined") return "";
 
-  // 1. пробуем стандартный Telegram API
+  // 1. Стандартный способ
   const tg = window?.Telegram?.WebApp;
-  const apiData = tg?.initData || "";
-
-  if (apiData && apiData.length > 0) return apiData;
-
-  // 2. fallback — берём из URL
-  return readInitDataFromHash();
-}
-
-export async function waitForInitData(ms = 5000) {
-  const start = Date.now();
-
-  while (Date.now() - start < ms) {
-    const d = getInitData();
-    if (d && d.length > 0) return d;
-
-    await new Promise((r) => setTimeout(r, 100));
+  if (tg?.initData && tg.initData.length > 0) {
+    return tg.initData;
   }
 
+  // 2. Fallback из URL (#tgWebAppData=)
+  try {
+    const hash = window.location.hash;
+    if (hash.includes("tgWebAppData=")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const data = params.get("tgWebAppData");
+      return data ? decodeURIComponent(data) : "";
+    }
+  } catch {}
+
   return "";
+}
+
+export async function waitForInitData(timeout = 5000) {
+  const start = Date.now();
+
+  return new Promise((resolve) => {
+    const i = setInterval(() => {
+      const d = getInitData();
+
+      if (d) {
+        clearInterval(i);
+        resolve(d);
+      }
+
+      if (Date.now() - start > timeout) {
+        clearInterval(i);
+        resolve("");
+      }
+    }, 200);
+  });
+}
+
+export function tgReady() {
+  try {
+    window?.Telegram?.WebApp?.ready();
+    window?.Telegram?.WebApp?.expand();
+  } catch {}
 }
