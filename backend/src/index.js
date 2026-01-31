@@ -255,6 +255,36 @@ app.post("/admin/lots", async (req, res) => {
 });
 
 // --- WS ---
+// ✅ Telegram webhook handler
+const ADMIN_IDS = String(process.env.ADMIN_IDS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+
+import { handleTelegramUpdate } from "./tg-bot-admin.js";
+
+app.post("/telegram/webhook", async (req, res) => {
+  try {
+    // Telegram надсилає секрет у заголовку, якщо ти задав secret_token у setWebhook
+    const secret = req.headers["x-telegram-bot-api-secret-token"];
+    if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
+      return res.status(401).json({ ok: false });
+    }
+
+    await handleTelegramUpdate(req.body, {
+      botToken: BOT_TOKEN,
+      adminIds: ADMIN_IDS,
+    });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("WEBHOOK ERROR:", e);
+    return res.json({ ok: true }); // Telegramу важливо отримати 200
+  }
+});
+
 const server = app.listen(PORT, () => console.log("✅ Backend on", PORT));
 const wss = new WebSocketServer({ server });
 
