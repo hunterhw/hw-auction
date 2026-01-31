@@ -41,6 +41,9 @@ export default function LotPage({ params }) {
   const [err, setErr] = useState("");
   const [subscribeUrl, setSubscribeUrl] = useState(null);
 
+  // ✅ debug info on-screen (so we understand why it hangs)
+  const [dbg, setDbg] = useState("");
+
   const [me, setMe] = useState({ id: null, name: "Ви" });
 
   const [toasts, setToasts] = useState([]);
@@ -55,6 +58,16 @@ export default function LotPage({ params }) {
     typeof window === "undefined"
       ? 0
       : (window?.Telegram?.WebApp?.initData || "").length;
+
+  const hashLen =
+    typeof window === "undefined"
+      ? 0
+      : (window?.location?.hash || "").length;
+
+  const hasTG =
+    typeof window === "undefined"
+      ? false
+      : !!window?.Telegram?.WebApp;
 
   const isDesktopView = useMemo(() => {
     if (typeof window === "undefined") return false;
@@ -84,7 +97,23 @@ export default function LotPage({ params }) {
         const r = await apiGet(`/lots/${lotId}`);
         if (!alive) return;
 
-        // если backend прислал запрет подписки
+        // ✅ debug: show what backend returns
+        setDbg(
+          [
+            `lotId=${lotId}`,
+            `hasTG=${hasTG ? "YES" : "NO"}`,
+            `initDataLen=${initLen}`,
+            `hashLen=${hashLen}`,
+            `keys=${Object.keys(r || {}).join(",") || "(none)"}`,
+            `error=${r?.error || ""}`,
+            `viewOnly=${String(r?.viewOnly)}`,
+            `subscribeUrl=${r?.subscribeUrl || ""}`,
+            `lot=${r?.lot ? "YES" : "NO"}`,
+            `bids=${Array.isArray(r?.bids) ? r.bids.length : 0}`,
+          ].join("\n")
+        );
+
+        // подписка
         if (r?.error === "NOT_SUBSCRIBED") {
           setSubscribeUrl(r.subscribeUrl || null);
           setErr("NOT_SUBSCRIBED");
@@ -97,6 +126,7 @@ export default function LotPage({ params }) {
         const nextBids = r?.bids || r?.lot?.bids || [];
 
         if (!nextLot) {
+          // ✅ instead of infinite loading — show "not found" state
           setLot(null);
           setBids([]);
           return;
@@ -135,19 +165,21 @@ export default function LotPage({ params }) {
         prevRef.current.leaderUserId = nextLot.leaderUserId || null;
 
         setLot(nextLot);
-        setBids(nextBids);
+        setBids(Array.isArray(nextBids) ? nextBids : []);
       } catch (e) {
         setErr("Помилка з’єднання (API).");
+        setDbg((d) => d + `\nEXCEPTION=${String(e?.message || e)}`);
       }
     }
 
     load();
-    const t = setInterval(load, 1000);
+    const t = setInterval(load, 1200);
 
     return () => {
       alive = false;
       clearInterval(t);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lotId, me?.id]);
 
   // timer tick
@@ -220,23 +252,50 @@ export default function LotPage({ params }) {
     bid(amount);
   }
 
+  const showSubscribe = err === "NOT_SUBSCRIBED";
+
+  // ===== UI =====
+
+  // ✅ when lot is missing – show reason + debug instead of endless spinner
   if (!lot) {
     return (
-      <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        <div style={{ fontWeight: 900 }}>Завантаження...</div>
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-          initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
+      <div style={{ padding: 16, fontFamily: "system-ui", color: "white" }}>
+        <div style={{ fontWeight: 1000, fontSize: 18 }}>Лот не завантажився</div>
+
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85, whiteSpace: "pre-wrap", border: "1px solid #222", borderRadius: 12, padding: 10, background: "#0f0f0f" }}>
+          {dbg || "dbg: empty"}
         </div>
+
         {err && (
-          <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
+          <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 800 }}>
             {String(err)}
           </div>
         )}
+
+        <div style={{ marginTop: 12 }}>
+          <Link href="/" style={{ color: "white", fontWeight: 900, textDecoration: "none" }}>
+            ← Повернутись до аукціонів
+          </Link>
+        </div>
+
+        <button
+          onClick={() => window.location.reload()}
+          style={{
+            marginTop: 12,
+            width: "100%",
+            padding: "12px",
+            borderRadius: 12,
+            border: "1px solid #333",
+            fontWeight: 900,
+            background: "#111",
+            color: "white",
+          }}
+        >
+          ОНОВИТИ
+        </button>
       </div>
     );
   }
-
-  const showSubscribe = err === "NOT_SUBSCRIBED";
 
   return (
     <>
@@ -271,8 +330,9 @@ export default function LotPage({ params }) {
         <div style={{ fontWeight: 900, opacity: 0.85 }}>Усі аукціони</div>
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.7, margin: "8px 14px 0" }}>
-        initData: {initLen > 0 ? `OK (${initLen})` : "EMPTY"}
+      {/* ✅ debug small (optional) */}
+      <div style={{ fontSize: 12, opacity: 0.6, margin: "8px 14px 0", whiteSpace: "pre-wrap" }}>
+        {dbg}
       </div>
 
       {showSubscribe && (
@@ -327,7 +387,7 @@ export default function LotPage({ params }) {
         </div>
       )}
 
-      <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
+      <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto", color: "white" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
           <div
