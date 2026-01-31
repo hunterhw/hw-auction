@@ -1,158 +1,202 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
+function resolveImage(url) {
+  if (!url) return null;
+
+  // якщо вже повний URL — як є
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+
+  // якщо бекенд віддав "/bmw-sth.jpg" — префіксуємо API_BASE
+  const base = process.env.NEXT_PUBLIC_API_BASE || "";
+  if (url.startsWith("/")) return `${base}${url}`;
+
+  return url;
+}
+
+function statusBadge(status) {
+  if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
+  if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#777" };
+  return { text: "СКОРО", bg: "#777" };
+}
+
 export default function HomePage() {
   const [lots, setLots] = useState([]);
   const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  async function load() {
-    setLoading(true);
-    setErr("");
-    try {
-      const r = await apiGet("/lots");
-      if (r?.error) {
-        setErr(String(r.error));
-        setLots([]);
-      } else {
-        setLots(r?.lots || []);
-      }
-    } catch (e) {
-      setErr("Помилка з’єднання (API).");
-      setLots([]);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useEffect(() => {
     tgReady();
+
+    let alive = true;
+
+    async function load() {
+      try {
+        const r = await apiGet("/lots");
+        if (!alive) return;
+
+        if (r?.error) {
+          setErr(String(r.error));
+          setLots([]);
+          return;
+        }
+
+        setErr("");
+        setLots(Array.isArray(r?.lots) ? r.lots : []);
+      } catch (e) {
+        setErr("Помилка з’єднання (API).");
+      }
+    }
+
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const t = setInterval(load, 2500); // авто-оновлення списку
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
   }, []);
 
+  const sortedLots = useMemo(() => {
+    const copy = [...lots];
+    const rank = (s) => (s === "LIVE" ? 0 : s === "SOON" ? 1 : 2);
+    copy.sort((a, b) => rank(a.status) - rank(b.status));
+    return copy;
+  }, [lots]);
+
   return (
-    <div
-      style={{
-        padding: 16,
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto",
-        background: "#0b0b0b",
-        minHeight: "100vh",
-        color: "white",
-      }}
-    >
-      {/* Header */}
-      <div style={{ textAlign: "center", marginTop: 6 }}>
-        <div style={{ fontWeight: 1000, fontSize: 20, letterSpacing: 0.2 }}>
+    <div style={{ minHeight: "100vh", background: "#0b0b0b", color: "white" }}>
+      {/* Шапка */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          background: "#0b0b0b",
+          borderBottom: "1px solid #222",
+          padding: "14px 16px 12px",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.5 }}>
           ГОЛОВНА
         </div>
-        <div style={{ marginTop: 6, fontWeight: 900, opacity: 0.85 }}>
+        <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
           HW HUNTER AUCTION
         </div>
       </div>
 
-      {/* Error */}
-      {err && (
-        <div
-          style={{
-            marginTop: 14,
-            padding: 12,
-            borderRadius: 12,
-            border: "1px solid #3a1f1f",
-            background: "#1a1111",
-            color: "white",
-          }}
-        >
-          <div style={{ fontWeight: 900 }}>Помилка</div>
-          <div style={{ marginTop: 6, opacity: 0.9 }}>{err}</div>
-
-          <button
-            onClick={load}
+      <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
+        {err && (
+          <div
             style={{
-              marginTop: 10,
-              width: "100%",
-              padding: "12px 12px",
+              padding: 12,
               borderRadius: 12,
-              border: "1px solid #333",
-              fontWeight: 900,
-              background: "#111",
+              border: "1px solid #3a1f1f",
+              background: "#1a1111",
               color: "white",
+              fontWeight: 800,
             }}
           >
-            ОНОВИТИ
-          </button>
-        </div>
-      )}
-
-      {/* Loading */}
-      {loading && !err && (
-        <div style={{ marginTop: 18, opacity: 0.8, textAlign: "center" }}>
-          Завантаження...
-        </div>
-      )}
-
-      {/* Lots list */}
-      <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
-        {!loading && !err && lots.length === 0 && (
-          <div style={{ opacity: 0.8, textAlign: "center", marginTop: 10 }}>
-            Немає активних лотів.
+            {err}
           </div>
         )}
 
-        {lots.map((l) => (
-          <Link
-            key={l.id}
-            href={`/lot/${l.id}`}
-            style={{
-              display: "flex",
-              gap: 12,
-              alignItems: "center",
-              padding: 12,
-              borderRadius: 14,
-              border: "1px solid #2c2c2c",
-              background: "#111",
-              color: "white",
-              textDecoration: "none",
-            }}
-          >
-            {/* small image */}
-            <div
-              style={{
-                width: 54,
-                height: 54,
-                borderRadius: 12,
-                overflow: "hidden",
-                border: "1px solid #333",
-                background: "#0f0f0f",
-                flex: "0 0 auto",
-              }}
-            >
-              <img
-                src={l.imageUrl}
-                alt={l.title}
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            </div>
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          {sortedLots.map((l) => {
+            const img = resolveImage(l.imageUrl);
+            const badge = statusBadge(l.status);
 
-            {/* text */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 900, fontSize: 14, lineHeight: 1.2 }}>
-                {l.title}
-              </div>
-              <div style={{ marginTop: 6, display: "flex", gap: 10, opacity: 0.9 }}>
-                <div style={{ fontWeight: 900 }}>₴{l.currentPrice}</div>
-                <div style={{ opacity: 0.7 }}>крок ₴{l.bidStep}</div>
-                <div style={{ opacity: 0.7 }}>{l.status === "LIVE" ? "LIVE" : l.status}</div>
-              </div>
-            </div>
+            return (
+              <Link
+                key={l.id}
+                href={`/lot/${l.id}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "64px 1fr auto",
+                  gap: 12,
+                  alignItems: "center",
+                  padding: 12,
+                  borderRadius: 14,
+                  border: "1px solid #2c2c2c",
+                  background: "#0f0f0f",
+                  color: "white",
+                  textDecoration: "none",
+                }}
+              >
+                {/* thumbnail */}
+                <div
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    border: "1px solid #333",
+                    background: "#111",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  {img ? (
+                    <img
+                      src={img}
+                      alt={l.title}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 800 }}>
+                      NO IMG
+                    </div>
+                  )}
+                </div>
 
-            <div style={{ opacity: 0.6, fontWeight: 900 }}>›</div>
-          </Link>
-        ))}
+                {/* title + price */}
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontWeight: 1000,
+                      fontSize: 14,
+                      lineHeight: 1.2,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {l.title}
+                  </div>
+                  <div style={{ marginTop: 6, opacity: 0.85, fontWeight: 900 }}>
+                    ₴{l.currentPrice}
+                    <span style={{ opacity: 0.65, fontWeight: 800 }}> / крок ₴{l.bidStep}</span>
+                  </div>
+                </div>
+
+                {/* badge */}
+                <div
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background: badge.bg,
+                    fontWeight: 1000,
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {badge.text}
+                </div>
+              </Link>
+            );
+          })}
+
+          {sortedLots.length === 0 && !err && (
+            <div style={{ opacity: 0.7, fontWeight: 800, textAlign: "center", marginTop: 18 }}>
+              Немає активних лотів
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
