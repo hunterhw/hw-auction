@@ -7,9 +7,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="uk">
       <head>
-        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        {/* важно: добавляем скрипт Telegram */}
+        <script src="https://telegram.org/js/telegram-web-app.js" />
       </head>
-
       <body style={{ margin: 0, background: "#0b0b0b", color: "white" }}>
         {children}
       </body>
