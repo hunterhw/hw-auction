@@ -1,3 +1,7 @@
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import adminRouter from "./admin.js";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -19,6 +23,18 @@ app.use(
 app.options("*", cors());
 
 app.use(express.json());
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// створюємо папку uploads якщо її нема
+const uploadsDir = path.join(__dirname, "../uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+// роздача завантажених файлів
+app.use("/uploads", express.static(uploadsDir));
+
+// адмін роутер
+app.use("/admin", adminRouter);
 
 const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN; // required
