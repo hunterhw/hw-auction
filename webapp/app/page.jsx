@@ -39,11 +39,7 @@ export default function HomePage() {
     <div style={{ padding: 16, fontFamily: "system-ui" }}>
       <div style={{ fontWeight: 900, fontSize: 18 }}>Головна</div>
 
-      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-        hasTG: {String(hasTG)} <br />
-        initDataLen: {initLen} <br />
-        hashLen: {hashLen}
-      </div>
+    
 
       {err && (
         <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>
