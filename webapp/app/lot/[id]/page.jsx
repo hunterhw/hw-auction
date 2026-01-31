@@ -29,7 +29,7 @@ export default function LotPage({ params }) {
   const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
   const [me, setMe] = useState({ id: null, name: "Ви" });
-  const [wsState, setWsState] = useState("init"); // init | connecting | open | closed | error
+ 
 
 
   const isDesktopView = useMemo(() => {
@@ -46,7 +46,7 @@ export default function LotPage({ params }) {
   const [outbid, setOutbid] = useState(false);
   const outbidTimer = useRef(null);
 
-  const wsUrl = process.env.NEXT_PUBLIC_WS_BASE;
+  
 
   useEffect(() => {
     tgReady();
@@ -131,7 +131,7 @@ useEffect(() => {
   
   useEffect(() => {
     setErr("");
-    setWsState("connecting");
+   
 
 
 
