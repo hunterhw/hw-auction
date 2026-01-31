@@ -45,6 +45,43 @@ export async function placeBid({ lotId, userId, userName, amount }) {
         endsAt: newEndsAt
       }
     });
+    import { prisma } from "./prisma.js"; // якщо у тебе prisma імпортується інакше — скажи, підлаштую
+
+export async function createLot({ title, description, startPrice, bidStep, durationMin, imageUrl }) {
+  const now = new Date();
+  const endsAt = new Date(now.getTime() + Number(durationMin) * 60 * 1000);
+
+  const lot = await prisma.lot.create({
+    data: {
+      title,
+      description,
+      imageUrl,
+      startPrice: Number(startPrice),
+      bidStep: Number(bidStep),
+      currentPrice: Number(startPrice),
+      status: "LIVE",
+      startsAt: now,
+      endsAt,
+      leaderUserId: null,
+    },
+  });
+
+  return {
+    id: lot.id,
+    title: lot.title,
+    imageUrl: lot.imageUrl,
+    description: lot.description,
+    startPrice: lot.startPrice,
+    bidStep: lot.bidStep,
+    currentPrice: lot.currentPrice,
+    leaderUserId: lot.leaderUserId,
+    status: lot.status,
+    startsAt: lot.startsAt,
+    endsAt: lot.endsAt,
+    createdAt: lot.createdAt,
+  };
+}
+
 
     return { bid, lot: lotUpdated };
   });
