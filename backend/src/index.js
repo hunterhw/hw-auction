@@ -209,6 +209,34 @@ app.post("/lots/:id/bid", async (req, res) => {
     return res.status(400).json({ error: String(e?.message || e) });
   }
 });
+// ===== ADMIN =====
+const ADMIN_KEY = process.env.ADMIN_KEY || "";
+
+app.post("/admin/lots", async (req, res) => {
+  try {
+    const { adminKey, title, imageUrl, startPrice, bidStep, durationMin } = req.body || {};
+
+    if (!ADMIN_KEY || adminKey !== ADMIN_KEY) {
+      return res.status(401).json({ error: "ADMIN_DENIED" });
+    }
+
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + Number(durationMin || 60) * 60 * 1000);
+
+    // ВАЖНО: placeBid/getLot/listLots у тебя уже работают через DB.
+    // Поэтому тут вызываем placeBid/auction слой НЕ НАДО.
+    // Сделай в auction.js функцию createLot и используй ее.
+    // Ниже — вариант через prisma напрямую, если prisma уже есть в auction.js.
+
+    // 1) Если у тебя в auction.js уже есть prisma — добавь там export createLot(...)
+    // 2) Здесь вызови createLot(...)
+
+    return res.status(500).json({ error: "ADD_CREATELOT_IN_AUCTION_JS" });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "SERVER_ERROR" });
+  }
+});
 
 // --- WS ---
 const server = app.listen(PORT, () => console.log("✅ Backend on", PORT));
