@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { createLot } from "./auction.js";
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .split(",")
   .map((x) => x.trim())
@@ -16,7 +16,7 @@ const PUBLIC_BASE = process.env.PUBLIC_BASE || "";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// uploads папка: backend/uploads  (або ../uploads від src)
+// uploads папка: backend/uploads (або ../uploads від src)
 const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -48,7 +48,11 @@ async function sendMessage(chatId, text, extra = {}) {
 }
 
 async function answerCallbackQuery(id, text) {
-  return tg("answerCallbackQuery", { callback_query_id: id, text, show_alert: false });
+  return tg("answerCallbackQuery", {
+    callback_query_id: id,
+    text,
+    show_alert: false,
+  });
 }
 
 function kb(items) {
@@ -93,7 +97,10 @@ function setSt(adminId, st) {
 
 export async function telegramWebhook(req, res) {
   try {
-    const upd = req.body;
+    const upd = req.body || {};
+
+    // ✅ ЛОГ ДЛЯ ДЕБАГА (самое важное)
+    console.log("TG UPDATE:", JSON.stringify(upd));
 
     // 1) callback кнопки
     if (upd?.callback_query) {
@@ -140,10 +147,7 @@ export async function telegramWebhook(req, res) {
 
     // /start
     if (text === "/start") {
-      await sendMessage(
-        chatId,
-        "👋 Адмін меню:\n/newlot — створити лот\n/cancel — скасувати"
-      );
+      await sendMessage(chatId, "👋 Адмін меню:\n/newlot — створити лот\n/cancel — скасувати");
       return res.json({ ok: true });
     }
 
@@ -199,17 +203,21 @@ export async function telegramWebhook(req, res) {
       const fname = newName(ext);
       fs.writeFileSync(path.join(uploadsDir, fname), buf);
 
-      // шлях який відкриється з фронта:
-      // бекенд роздає /uploads
+      // шлях який відкриється з фронта: бекенд роздає /uploads
+      if (!PUBLIC_BASE) {
+        await sendMessage(
+          chatId,
+          "⚠️ PUBLIC_BASE не заданий. Додай PUBLIC_BASE у Render, наприклад:\n<code>https://hw-auction-backend.onrender.com</code>"
+        );
+        return res.json({ ok: true });
+      }
+
       st.data.imageUrl = `${PUBLIC_BASE}/uploads/${fname}`;
 
       st.step = "START_PRICE";
       setSt(fromId, st);
 
-      await sendMessage(
-        chatId,
-        "3/5 Введи <b>стартову ціну</b> (грн), наприклад: <code>80</code>"
-      );
+      await sendMessage(chatId, "3/5 Введи <b>стартову ціну</b> (грн), напр: <code>80</code>");
       return res.json({ ok: true });
     }
 
@@ -218,7 +226,7 @@ export async function telegramWebhook(req, res) {
       st.data.startPrice = ensureNumber(text, 0);
       st.step = "BID_STEP";
       setSt(fromId, st);
-      await sendMessage(chatId, "4/5 Введи <b>крок ставки</b> (грн), наприклад: <code>10</code>");
+      await sendMessage(chatId, "4/5 Введи <b>крок ставки</b> (грн), напр: <code>10</code>");
       return res.json({ ok: true });
     }
 
@@ -227,7 +235,7 @@ export async function telegramWebhook(req, res) {
       st.data.bidStep = ensureNumber(text, 10);
       st.step = "DURATION";
       setSt(fromId, st);
-      await sendMessage(chatId, "5/5 Введи <b>тривалість</b> (хв), наприклад: <code>60</code>");
+      await sendMessage(chatId, "5/5 Введи <b>тривалість</b> (хв), напр: <code>60</code>");
       return res.json({ ok: true });
     }
 
@@ -251,11 +259,7 @@ export async function telegramWebhook(req, res) {
         chatId,
         `✅ Лот створено!\n\n<b>${lot.title}</b>\nСтарт: ₴${lot.currentPrice}\nКрок: ₴${lot.bidStep}\n`,
         lotUrl
-          ? {
-              reply_markup: {
-                inline_keyboard: [[{ text: "Відкрити лот", url: lotUrl }]],
-              },
-            }
+          ? { reply_markup: { inline_keyboard: [[{ text: "Відкрити лот", url: lotUrl }]] } }
           : {}
       );
 
