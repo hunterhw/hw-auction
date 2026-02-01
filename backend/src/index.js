@@ -229,16 +229,22 @@ try {
     const lotUrl = WEBAPP_URL ? `${WEBAPP_URL}/lot/${req.params.id}` : "";
 
     const msg =
-      `⚡️ Твою ставку перебили!\n` +
-      `<b>${lotTitle}</b>\n` +
-      `Нова ціна: <b>₴${newPrice}</b>\n` +
-      (lotUrl ? `\n👉 Відкрити лот: ${escHtml(lotUrl)}` : "");
+  `⚡️ Твою ставку перебили!\n` +
+  `<b>${lotTitle}</b>\n` +
+  `Нова ціна: <b>₴${newPrice}</b>\n` +
+  `\nНатисни кнопку нижче 👇`;
+
 
     // можно кнопкой
     const extra =
-      lotUrl
-        ? { reply_markup: { inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl }]] } }
-        : {};
+  lotUrl
+    ? {
+        reply_markup: {
+          inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl } }]],
+        },
+      }
+    : {};
+
 
     const sent = await tgSendMessage(prevId, msg, extra);
 
