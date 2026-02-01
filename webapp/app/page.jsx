@@ -5,6 +5,38 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
+/* =========================
+   ✅ FAVORITES (localStorage)
+========================= */
+const FAV_KEY = "hw_favorites_v1";
+
+function favSafeParse(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function getFavorites() {
+  if (typeof window === "undefined") return [];
+  const raw = window.localStorage.getItem(FAV_KEY);
+  const arr = favSafeParse(raw);
+  return Array.isArray(arr) ? arr.map(String) : [];
+}
+
+function toggleFavorite(id) {
+  if (typeof window === "undefined") return [];
+  const lotId = String(id);
+  const fav = getFavorites();
+  const next = fav.includes(lotId) ? fav.filter((x) => x !== lotId) : [lotId, ...fav];
+  window.localStorage.setItem(FAV_KEY, JSON.stringify(next.slice(0, 200)));
+  return next;
+}
+
+/* =========================
+   IMAGES
+========================= */
 function resolveImage(url) {
   if (!url) return null;
 
@@ -36,11 +68,16 @@ function normalizeStatus(s) {
 export default function HomePage() {
   const [lots, setLots] = useState([]);
   const [err, setErr] = useState("");
+
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED
+  const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED | FAV
+
+  const [favIds, setFavIds] = useState([]);
 
   useEffect(() => {
     tgReady();
+    // подтягиваем избранное один раз при старте
+    setFavIds(getFavorites());
 
     let alive = true;
 
@@ -84,9 +121,16 @@ export default function HomePage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const favSet = new Set(favIds.map(String));
 
     // сначала фильтр по вкладке
-    let arr = lots.filter((l) => normalizeStatus(l.status) === tab);
+    let arr = lots;
+
+    if (tab === "FAV") {
+      arr = arr.filter((l) => favSet.has(String(l.id)));
+    } else {
+      arr = arr.filter((l) => normalizeStatus(l.status) === tab);
+    }
 
     // поиск
     if (q) {
@@ -97,19 +141,20 @@ export default function HomePage() {
     // LIVE — по endsAt ближе к завершению
     // SOON — по startsAt ближе к старту
     // ENDED — по endsAt новые сверху
+    // FAV — как LIVE (по окончанию), чтобы удобнее было
     arr.sort((a, b) => {
       const aEnd = a?.endsAt ? new Date(a.endsAt).getTime() : 0;
       const bEnd = b?.endsAt ? new Date(b.endsAt).getTime() : 0;
       const aStart = a?.startsAt ? new Date(a.startsAt).getTime() : 0;
       const bStart = b?.startsAt ? new Date(b.startsAt).getTime() : 0;
 
-      if (tab === "LIVE") return aEnd - bEnd;
+      if (tab === "LIVE" || tab === "FAV") return aEnd - bEnd;
       if (tab === "SOON") return aStart - bStart;
       return bEnd - aEnd;
     });
 
     return arr;
-  }, [lots, query, tab]);
+  }, [lots, query, tab, favIds]);
 
   return (
     <div
@@ -167,7 +212,7 @@ export default function HomePage() {
           style={{
             marginTop: 10,
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1fr 1fr",
             gap: 8,
           }}
         >
@@ -212,6 +257,20 @@ export default function HomePage() {
           >
             ЗАВЕРШ. ({counts.ENDED})
           </button>
+
+          <button
+            onClick={() => setTab("FAV")}
+            style={{
+              padding: "10px 10px",
+              borderRadius: 12,
+              border: "1px solid #2c2c2c",
+              background: tab === "FAV" ? "rgba(62,136,247,0.22)" : "rgba(17,17,17,0.9)",
+              color: "white",
+              fontWeight: 1000,
+            }}
+          >
+            ⭐ Обране ({favIds.length})
+          </button>
         </div>
       </div>
 
@@ -235,6 +294,7 @@ export default function HomePage() {
           {filtered.map((l) => {
             const img = resolveImage(l.imageUrl);
             const badge = statusBadge(normalizeStatus(l.status));
+            const isFav = favIds.includes(String(l.id));
 
             return (
               <Link
@@ -242,7 +302,7 @@ export default function HomePage() {
                 href={`/lot/${l.id}`}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "64px 1fr auto",
+                  gridTemplateColumns: "64px 1fr 40px auto",
                   gap: 12,
                   alignItems: "center",
                   padding: 12,
@@ -253,6 +313,7 @@ export default function HomePage() {
                   textDecoration: "none",
                 }}
               >
+                {/* thumbnail */}
                 <div
                   style={{
                     width: 64,
@@ -280,6 +341,7 @@ export default function HomePage() {
                   )}
                 </div>
 
+                {/* title + price */}
                 <div style={{ minWidth: 0 }}>
                   <div
                     style={{
@@ -303,6 +365,33 @@ export default function HomePage() {
                   </div>
                 </div>
 
+                {/* ⭐ favorite */}
+                <button
+                  onClick={(e) => {
+                    e.preventDefault(); // не открывать лот
+                    e.stopPropagation();
+                    const next = toggleFavorite(l.id);
+                    setFavIds(next);
+                  }}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 12,
+                    border: "1px solid #2c2c2c",
+                    background: "rgba(17,17,17,0.9)",
+                    color: "white",
+                    fontWeight: 1000,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  aria-label="favorite"
+                  title="Обране"
+                >
+                  {isFav ? "⭐" : "☆"}
+                </button>
+
+                {/* badge */}
                 <div
                   style={{
                     padding: "6px 10px",
@@ -321,7 +410,7 @@ export default function HomePage() {
 
           {filtered.length === 0 && !err && (
             <div style={{ opacity: 0.7, fontWeight: 800, textAlign: "center", marginTop: 18 }}>
-              Нічого не знайдено
+              {tab === "FAV" ? "Немає обраних лотів" : "Нічого не знайдено"}
             </div>
           )}
         </div>
