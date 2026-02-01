@@ -6,7 +6,7 @@ globalThis.__prisma = prisma;
 /* ===============================
    HELPERS
 ================================ */
-function computeStatus mergesStatus(lot) {
+function computeStatus(lot) {
   if (!lot) return "ENDED";
   if (lot.status === "ENDED") return "ENDED";
 
@@ -18,6 +18,7 @@ function computeStatus mergesStatus(lot) {
   if (now >= endsAt) return "ENDED";
   return "LIVE";
 }
+
 
 /* ===============================
    CREATE LOT (ADMIN / BOT)
