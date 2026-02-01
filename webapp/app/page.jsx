@@ -8,15 +8,19 @@ import { tgReady } from "@/lib/tg";
 function resolveImage(url) {
   if (!url) return null;
 
-  // якщо вже повний URL — як є
+  // если уже полный URL — как есть
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
 
-  // якщо бекенд віддав "/bmw-sth.jpg" — префіксуємо API_BASE
-  const base = process.env.NEXT_PUBLIC_API_BASE || "";
-  if (url.startsWith("/")) return `${base}${url}`;
+  // ✅ если это uploads с бекенда — добавляем API_BASE
+  if (url.startsWith("/uploads/")) {
+    const base = process.env.NEXT_PUBLIC_API_BASE || "";
+    return `${base}${url}`;
+  }
 
+  // ✅ все остальное типа "/bmw-sth.jpg" — это фронт (Vercel public)
   return url;
 }
+
 
 function statusBadge(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
