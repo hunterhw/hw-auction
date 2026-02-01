@@ -5,22 +5,28 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
+function joinUrl(base, path) {
+  if (!base) return path;
+  const b = base.endsWith("/") ? base.slice(0, -1) : base;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${b}${p}`;
+}
+
 function resolveImage(url) {
   if (!url) return null;
 
-  // если уже полный URL — как есть
+  // уже полный URL
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
 
-  // ✅ если это uploads с бекенда — добавляем API_BASE
+  // картинки из бекенда (uploads)
   if (url.startsWith("/uploads/")) {
     const base = process.env.NEXT_PUBLIC_API_BASE || "";
-    return `${base}${url}`;
+    return joinUrl(base, url);
   }
 
-  // ✅ все остальное типа "/bmw-sth.jpg" — это фронт (Vercel public)
+  // всё остальное (например "/bmw-sth.jpg") — из фронта (public)
   return url;
 }
-
 
 function statusBadge(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
@@ -34,7 +40,6 @@ export default function HomePage() {
 
   useEffect(() => {
     tgReady();
-
     let alive = true;
 
     async function load() {
@@ -50,13 +55,13 @@ export default function HomePage() {
 
         setErr("");
         setLots(Array.isArray(r?.lots) ? r.lots : []);
-      } catch (e) {
+      } catch {
         setErr("Помилка з’єднання (API).");
       }
     }
 
     load();
-    const t = setInterval(load, 2500); // авто-оновлення списку
+    const t = setInterval(load, 2500);
     return () => {
       alive = false;
       clearInterval(t);
@@ -71,21 +76,30 @@ export default function HomePage() {
   }, [lots]);
 
   return (
-  <div
-    style={{
-      minHeight: "100vh",
-      color: "white",
-      backgroundImage:
-        "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.85)), url('/bg.jpg')",
-      backgroundSize: "cover",
-      backgroundPosition: "center",
-      backgroundAttachment: "fixed",
-    }}
-  >
-    {/* ...остальной код */}
-  </div>
-);
-
+    <div
+      style={{
+        minHeight: "100vh",
+        color: "white",
+        backgroundImage:
+          "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.88)), url('/bg.jpg')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "fixed",
+      }}
+    >
+      {/* Шапка */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          background: "rgba(10,10,10,0.75)",
+          backdropFilter: "blur(10px)",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          padding: "14px 16px 12px",
+          textAlign: "center",
+        }}
+      >
         <div style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.5 }}>
           ГОЛОВНА
         </div>
@@ -101,7 +115,7 @@ export default function HomePage() {
               padding: 12,
               borderRadius: 12,
               border: "1px solid #3a1f1f",
-              background: "#1a1111",
+              background: "rgba(26,17,17,0.85)",
               color: "white",
               fontWeight: 800,
             }}
@@ -126,8 +140,9 @@ export default function HomePage() {
                   alignItems: "center",
                   padding: 12,
                   borderRadius: 14,
-                  border: "1px solid #2c2c2c",
-                  background: "#0f0f0f",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(15,15,15,0.82)",
+                  backdropFilter: "blur(6px)",
                   color: "white",
                   textDecoration: "none",
                 }}
@@ -139,8 +154,8 @@ export default function HomePage() {
                     height: 64,
                     borderRadius: 12,
                     overflow: "hidden",
-                    border: "1px solid #333",
-                    background: "#111",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "rgba(17,17,17,0.9)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -152,11 +167,13 @@ export default function HomePage() {
                       src={img}
                       alt={l.title}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      onError={(e) => {
+                        // если битая ссылка — показываем "NO IMG"
+                        e.currentTarget.style.display = "none";
+                      }}
                     />
                   ) : (
-                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 800 }}>
-                      NO IMG
-                    </div>
+                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 800 }}>NO IMG</div>
                   )}
                 </div>
 
@@ -174,7 +191,7 @@ export default function HomePage() {
                   >
                     {l.title}
                   </div>
-                  <div style={{ marginTop: 6, opacity: 0.85, fontWeight: 900 }}>
+                  <div style={{ marginTop: 6, opacity: 0.9, fontWeight: 900 }}>
                     ₴{l.currentPrice}
                     <span style={{ opacity: 0.65, fontWeight: 800 }}> / крок ₴{l.bidStep}</span>
                   </div>
