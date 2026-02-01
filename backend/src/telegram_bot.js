@@ -20,7 +20,7 @@ if (!BOT_TOKEN) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// uploads папка: backend/uploads
+// uploads папка: backend/uploads (больше не нужна для лотов, но оставим)
 const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -33,7 +33,6 @@ function isAdmin(userId) {
 
 /* =========================
    ✅ HTML ESCAPE (fix TG "can't parse entities")
-   Любой динамический текст (title, id, username) прогоняй через escHtml
 ========================= */
 function escHtml(s) {
   return String(s ?? "")
@@ -76,7 +75,6 @@ async function sendMessage(chatId, text, extra = {}) {
 }
 
 async function answerCallbackQuery(id, text) {
-  // callback query тоже может падать, но там parse_mode нет — просто текст
   return tg("answerCallbackQuery", {
     callback_query_id: id,
     text: String(text),
@@ -85,7 +83,6 @@ async function answerCallbackQuery(id, text) {
 }
 
 function kb(items) {
-  // items: [[{text, callback_data}]]
   return { reply_markup: { inline_keyboard: items } };
 }
 
@@ -95,6 +92,7 @@ async function getFilePath(fileId) {
   return r.result.file_path;
 }
 
+// Эти функции больше не нужны для лотов (мы не скачиваем файл), но можно оставить
 async function downloadTelegramFile(filePath) {
   const url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
   const res = await fetch(url);
@@ -102,7 +100,6 @@ async function downloadTelegramFile(filePath) {
   const buf = Buffer.from(await res.arrayBuffer());
   return buf;
 }
-
 function newName(ext = ".jpg") {
   return crypto.randomBytes(16).toString("hex") + ext;
 }
@@ -115,11 +112,9 @@ function ensureNumber(v, def) {
 function reset(adminId) {
   state.delete(String(adminId));
 }
-
 function getSt(adminId) {
   return state.get(String(adminId)) || null;
 }
-
 function setSt(adminId, st) {
   state.set(String(adminId), st);
 }
@@ -217,7 +212,6 @@ export async function telegramWebhook(req, res) {
         const lotId = data.slice("DELLOT:".length);
 
         await answerCallbackQuery(cq.id, "Підтвердіть видалення");
-
         await sendMessage(
           chatId,
           `⚠️ Видалити лот?\n<code>${escHtml(lotId)}</code>\n\nЦе видалить лот і всі ставки назавжди.`,
@@ -236,7 +230,6 @@ export async function telegramWebhook(req, res) {
         const lotId = data.slice("DELLOT_CONFIRM:".length);
 
         await answerCallbackQuery(cq.id, "Видаляю...");
-
         try {
           await deleteLot(lotId);
           await sendMessage(
@@ -251,7 +244,6 @@ export async function telegramWebhook(req, res) {
             adminMenuKeyboard()
           );
         }
-
         return res.json({ ok: true });
       }
 
@@ -265,16 +257,11 @@ export async function telegramWebhook(req, res) {
 
     const chatId = msg.chat?.id;
     const fromId = msg.from?.id;
-
-    // текст/команда
     const text = (msg.text || "").trim();
 
-    // ✅ ВАЖНО: нормализация команд
-    // /start@BotName -> /start
-    // /start payload -> /start
+    // нормализация команд (/start@BotName)
     const cmd = text.split(/\s+/)[0].replace(/@[\w_]+$/, "").toLowerCase();
 
-    // /myid
     if (cmd === "/myid") {
       await sendMessage(chatId, `Ваш ID: <code>${escHtml(fromId)}</code>`);
       return res.json({ ok: true });
@@ -286,7 +273,6 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // /start
     if (cmd === "/start") {
       await setMyCommands();
       await sendMessage(
@@ -297,14 +283,12 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // /cancel
     if (cmd === "/cancel") {
       reset(fromId);
       await sendMessage(chatId, "✅ Скасовано.", adminMenuKeyboard());
       return res.json({ ok: true });
     }
 
-    // /lots
     if (cmd === "/lots") {
       const lots = await listLots();
 
@@ -329,7 +313,6 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // /dellot <id>
     if (cmd === "/dellot") {
       const parts = text.split(" ").filter(Boolean);
       const lotId = parts[1];
@@ -356,7 +339,6 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // /newlot
     if (cmd === "/newlot") {
       setSt(fromId, { step: "TITLE", data: {} });
       await sendMessage(
@@ -371,7 +353,6 @@ export async function telegramWebhook(req, res) {
     const st = getSt(fromId);
     if (!st) return res.json({ ok: true });
 
-    // STEP: TITLE
     if (st.step === "TITLE") {
       st.data.title = text || "New lot";
       st.step = "PHOTO";
@@ -385,7 +366,9 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // STEP: PHOTO
+    // ✅ STEP: PHOTO — ВАЖНОЕ ИЗМЕНЕНИЕ:
+    // Не сохраняем в uploads (после деплоя пропадает),
+    // а сохраняем прямую ссылку на файл Telegram
     if (st.step === "PHOTO") {
       const photos = msg.photo;
 
@@ -396,55 +379,33 @@ export async function telegramWebhook(req, res) {
 
       const best = photos[photos.length - 1];
       const filePath = await getFilePath(best.file_id);
-      const buf = await downloadTelegramFile(filePath);
 
-      const ext = path.extname(filePath) || ".jpg";
-      const fname = newName(ext);
-      fs.writeFileSync(path.join(uploadsDir, fname), buf);
-
-      if (!PUBLIC_BASE) {
-        reset(fromId);
-        await sendMessage(
-          chatId,
-          "⚠️ PUBLIC_BASE не заданий. Додай PUBLIC_BASE у Render, наприклад:\n<code>https://hw-auction-backend.onrender.com</code>",
-          adminMenuKeyboard()
-        );
-        return res.json({ ok: true });
-      }
-
-      st.data.imageUrl = `${PUBLIC_BASE}/uploads/${fname}`;
+      // ✅ Telegram-hosted image (не слетит после деплоя)
+      st.data.imageUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
       st.step = "START_PRICE";
       setSt(fromId, st);
 
-      await sendMessage(
-        chatId,
-        "3/5 Введи <b>стартову ціну</b> (грн), напр: <code>80</code>"
-      );
+      await sendMessage(chatId, "3/5 Введи <b>стартову ціну</b> (грн), напр: <code>80</code>");
       return res.json({ ok: true });
     }
 
-    // STEP: START_PRICE
     if (st.step === "START_PRICE") {
       st.data.startPrice = ensureNumber(text, 0);
       st.step = "BID_STEP";
       setSt(fromId, st);
-
       await sendMessage(chatId, "4/5 Введи <b>крок ставки</b> (грн), напр: <code>10</code>");
       return res.json({ ok: true });
     }
 
-    // STEP: BID_STEP
     if (st.step === "BID_STEP") {
       st.data.bidStep = ensureNumber(text, 10);
       st.step = "DURATION";
       setSt(fromId, st);
-
       await sendMessage(chatId, "5/5 Введи <b>тривалість</b> (хв), напр: <code>60</code>");
       return res.json({ ok: true });
     }
 
-    // STEP: DURATION -> create lot
     if (st.step === "DURATION") {
       const durationMin = Math.max(1, ensureNumber(text, 60));
       const endsAt = new Date(Date.now() + durationMin * 60 * 1000);
