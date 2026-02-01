@@ -30,8 +30,11 @@ app.use(express.json({ limit: "5mb" }));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// uploads folder
-const uploadsDir = path.join(__dirname, "../uploads");
+// ✅ uploads folder (Persistent)
+const uploadsDir = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.join(__dirname, "../uploads");
+
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use("/uploads", express.static(uploadsDir));
 
@@ -74,8 +77,6 @@ async function checkSubscription(userId) {
 
 function authFromInitData(req) {
   const initData = req.headers["x-telegram-initdata"];
-
-  // Desktop fallback
   if (!initData || typeof initData !== "string" || initData.length === 0) return null;
 
   if (!verifyTelegramInitData(initData, BOT_TOKEN)) throw new Error("BAD_INITDATA");
@@ -94,14 +95,13 @@ function normalizeLotPayload(rawLot) {
 // --- health ---
 app.get("/health", (_, res) => res.json({ ok: true }));
 
-// ✅ IMPORTANT: webhook route MUST exist (Telegram gets 200)
+// webhook
 app.post("/telegram/webhook", async (req, res) => {
   try {
     console.log("TG UPDATE:", JSON.stringify(req.body));
-    await telegramWebhook(req, res); // твой обработчик сам вернёт ok:true
+    await telegramWebhook(req, res);
   } catch (e) {
     console.error("telegram webhook error:", e);
-    // Telegram важно получить 200
     return res.status(200).json({ ok: true });
   }
 });
