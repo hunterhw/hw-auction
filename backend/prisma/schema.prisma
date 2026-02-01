@@ -21,8 +21,6 @@ model Lot {
   endsAt       DateTime
   createdAt    DateTime  @default(now())
   bids         Bid[]
-  channelPosted   Boolean @default(false)
-  winnerNotified  Boolean @default(false)
 }
 
 model Bid {
