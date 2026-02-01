@@ -237,7 +237,7 @@ try {
     // можно кнопкой
     const extra =
       lotUrl
-        ? { reply_markup: { inline_keyboard: [[{ text: "Відкрити лот", url: lotUrl }]] } }
+        ? { reply_markup: { inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl }]] } }
         : {};
 
     const sent = await tgSendMessage(prevId, msg, extra);
