@@ -21,7 +21,7 @@ function computeStatus(lot) {
 
 /* ===============================
    CREATE LOT (ADMIN / BOT)
-   - создаём как LIVE сразу (как ты хотел)
+   - создаём как LIVE сразу
    - startsAt = now
 ================================ */
 export async function createLot({ title, imageUrl, startPrice, bidStep, endsAt }) {
@@ -47,17 +47,15 @@ export async function createLot({ title, imageUrl, startPrice, bidStep, endsAt }
 
 /* ===============================
    LIST LOTS
-   ✅ Никаких DELETED тут быть не может.
-   Плюс: аккуратно обновляем статус по времени.
+   ✅ никаких DELETED (у тебя нет такого enum)
+   + авто-обновление статусов по времени
 ================================ */
 export async function listLots() {
   const lots = await prisma.lot.findMany({
-    // показываем все, кроме "старых" по желанию — но проще так:
     where: { status: { in: ["SCHEDULED", "LIVE", "ENDED"] } },
     orderBy: { endsAt: "asc" },
   });
 
-  // авто-обновление статусов по времени (без cron)
   const updates = [];
   for (const lot of lots) {
     const nextStatus = computeStatus(lot);
@@ -71,10 +69,7 @@ export async function listLots() {
       lot.status = nextStatus;
     }
   }
-  if (updates.length) {
-    // не блокируем выдачу списка, но дожидаемся обновлений
-    await Promise.allSettled(updates);
-  }
+  if (updates.length) await Promise.allSettled(updates);
 
   return lots;
 }
@@ -110,6 +105,7 @@ export async function getLot(id) {
 
 /* ===============================
    PLACE BID
+   ✅ FIX: убран `lock` (его нет в твоей Prisma версии)
 ================================ */
 export async function placeBid({ lotId, userId, userName, amount }) {
   const lotIdStr = String(lotId);
@@ -124,9 +120,6 @@ export async function placeBid({ lotId, userId, userName, amount }) {
   return prisma.$transaction(async (tx) => {
     const lot = await tx.lot.findUnique({
       where: { id: lotIdStr },
-      // если у тебя Postgres с Prisma 5.x — lock может работать не везде.
-      // если вдруг упадет — скажи, я дам безопасный вариант без lock.
-      lock: { mode: "ForUpdate" },
     });
 
     if (!lot) throw new Error("LOT_NOT_FOUND");
