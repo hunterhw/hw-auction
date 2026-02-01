@@ -71,19 +71,21 @@ export default function HomePage() {
   }, [lots]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0b0b0b", color: "white" }}>
-      {/* Шапка */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-          background: "#0b0b0b",
-          borderBottom: "1px solid #222",
-          padding: "14px 16px 12px",
-          textAlign: "center",
-        }}
-      >
+  <div
+    style={{
+      minHeight: "100vh",
+      color: "white",
+      backgroundImage:
+        "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.85)), url('/bg.jpg')",
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+      backgroundAttachment: "fixed",
+    }}
+  >
+    {/* ...остальной код */}
+  </div>
+);
+
         <div style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.5 }}>
           ГОЛОВНА
         </div>
