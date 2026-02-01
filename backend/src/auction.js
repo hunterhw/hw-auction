@@ -166,3 +166,10 @@ export async function placeBid({ lotId, userId, userName, amount }) {
     return { bid, lot: updatedLot };
   });
 }
+export async function deleteLot(lotId) {
+  const id = String(lotId);
+  // удалит лот + все bids (из-за onDelete: Cascade)
+  return prisma.lot.delete({
+    where: { id },
+  });
+}
