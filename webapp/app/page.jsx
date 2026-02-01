@@ -5,26 +5,19 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
-function joinUrl(base, path) {
-  if (!base) return path;
-  const b = base.endsWith("/") ? base.slice(0, -1) : base;
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${b}${p}`;
-}
-
 function resolveImage(url) {
   if (!url) return null;
 
-  // уже полный URL
+  // полный URL
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
 
-  // картинки из бекенда (uploads)
+  // uploads с бэка (например: /uploads/xxx.jpg)
   if (url.startsWith("/uploads/")) {
     const base = process.env.NEXT_PUBLIC_API_BASE || "";
-    return joinUrl(base, url);
+    return `${base}${url}`;
   }
 
-  // всё остальное (например "/bmw-sth.jpg") — из фронта (public)
+  // все остальное (/bmw-sth.jpg) — это фронт (public)
   return url;
 }
 
@@ -34,10 +27,17 @@ function statusBadge(status) {
   return { text: "СКОРО", bg: "#777" };
 }
 
+function normalizeStatus(s) {
+  // на всякий случай, если придет SCHEDULED
+  if (s === "SCHEDULED") return "SOON";
+  return s;
+}
+
 export default function HomePage() {
   const [lots, setLots] = useState([]);
   const [err, setErr] = useState("");
-  const [q, setQ] = useState(""); // ✅ поиск
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED
 
   useEffect(() => {
     tgReady();
@@ -56,8 +56,11 @@ export default function HomePage() {
         }
 
         setErr("");
-        setLots(Array.isArray(r?.lots) ? r.lots : []);
-      } catch (e) {
+        const raw = Array.isArray(r?.lots) ? r.lots : [];
+        // нормализуем статус
+        const fixed = raw.map((x) => ({ ...x, status: normalizeStatus(x.status) }));
+        setLots(fixed);
+      } catch {
         setErr("Помилка з’єднання (API).");
       }
     }
@@ -70,61 +73,168 @@ export default function HomePage() {
     };
   }, []);
 
-  // ✅ фильтр по поиску
-  const filteredLots = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return lots;
-    return lots.filter((l) => String(l.title || "").toLowerCase().includes(needle));
-  }, [lots, q]);
+  const counts = useMemo(() => {
+    const c = { LIVE: 0, SOON: 0, ENDED: 0 };
+    for (const l of lots) {
+      const st = normalizeStatus(l.status);
+      if (c[st] !== undefined) c[st]++;
+    }
+    return c;
+  }, [lots]);
 
-  // ✅ группы по статусам
-  const groups = useMemo(() => {
-    const live = [];
-    const soon = [];
-    const ended = [];
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
 
-    for (const l of filteredLots) {
-      if (l.status === "LIVE") live.push(l);
-      else if (l.status === "SOON" || l.status === "SCHEDULED") soon.push(l);
-      else ended.push(l);
+    // сначала фильтр по вкладке
+    let arr = lots.filter((l) => normalizeStatus(l.status) === tab);
+
+    // поиск
+    if (q) {
+      arr = arr.filter((l) => String(l.title || "").toLowerCase().includes(q));
     }
 
-    // Можно сортировать внутри групп как хочешь
-    // LIVE: кто раньше закончится — выше
-    live.sort((a, b) => new Date(a.endsAt).getTime() - new Date(b.endsAt).getTime());
-    // SOON: кто раньше стартанёт — выше
-    soon.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-    // ENDED: последние завершенные — выше
-    ended.sort((a, b) => new Date(b.endsAt).getTime() - new Date(a.endsAt).getTime());
+    // сортировка:
+    // LIVE — по endsAt ближе к завершению
+    // SOON — по startsAt ближе к старту
+    // ENDED — по endsAt новые сверху
+    arr.sort((a, b) => {
+      const aEnd = a?.endsAt ? new Date(a.endsAt).getTime() : 0;
+      const bEnd = b?.endsAt ? new Date(b.endsAt).getTime() : 0;
+      const aStart = a?.startsAt ? new Date(a.startsAt).getTime() : 0;
+      const bStart = b?.startsAt ? new Date(b.startsAt).getTime() : 0;
 
-    return { live, soon, ended };
-  }, [filteredLots]);
+      if (tab === "LIVE") return aEnd - bEnd;
+      if (tab === "SOON") return aStart - bStart;
+      return bEnd - aEnd;
+    });
 
-  function Section({ title, items }) {
-    if (!items.length) return null;
+    return arr;
+  }, [lots, query, tab]);
 
-    return (
-      <div style={{ marginTop: 14 }}>
-        <div
-          style={{
-            fontWeight: 1000,
-            fontSize: 12,
-            letterSpacing: 0.8,
-            opacity: 0.85,
-            marginBottom: 8,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <span>{title}</span>
-          <span style={{ opacity: 0.6 }}>{items.length}</span>
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        color: "white",
+        backgroundImage:
+          "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.85)), url('/bg.jpg')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "fixed",
+      }}
+    >
+      {/* Шапка */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          background: "rgba(11,11,11,0.92)",
+          backdropFilter: "blur(8px)",
+          borderBottom: "1px solid #222",
+          padding: "14px 16px 12px",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.5 }}>
+          ГОЛОВНА
+        </div>
+        <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
+          HW HUNTER AUCTION
         </div>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          {items.map((l) => {
+        {/* Поиск */}
+        <div style={{ marginTop: 12 }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Пошук лота..."
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #2c2c2c",
+              background: "rgba(17,17,17,0.9)",
+              color: "white",
+              fontWeight: 800,
+              outline: "none",
+            }}
+          />
+        </div>
+
+        {/* Tabs */}
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 8,
+          }}
+        >
+          <button
+            onClick={() => setTab("LIVE")}
+            style={{
+              padding: "10px 10px",
+              borderRadius: 12,
+              border: "1px solid #2c2c2c",
+              background: tab === "LIVE" ? "rgba(25,195,125,0.25)" : "rgba(17,17,17,0.9)",
+              color: "white",
+              fontWeight: 1000,
+            }}
+          >
+            LIVE ({counts.LIVE})
+          </button>
+
+          <button
+            onClick={() => setTab("SOON")}
+            style={{
+              padding: "10px 10px",
+              borderRadius: 12,
+              border: "1px solid #2c2c2c",
+              background: tab === "SOON" ? "rgba(160,160,160,0.18)" : "rgba(17,17,17,0.9)",
+              color: "white",
+              fontWeight: 1000,
+            }}
+          >
+            СКОРО ({counts.SOON})
+          </button>
+
+          <button
+            onClick={() => setTab("ENDED")}
+            style={{
+              padding: "10px 10px",
+              borderRadius: 12,
+              border: "1px solid #2c2c2c",
+              background: tab === "ENDED" ? "rgba(160,160,160,0.18)" : "rgba(17,17,17,0.9)",
+              color: "white",
+              fontWeight: 1000,
+            }}
+          >
+            ЗАВЕРШ. ({counts.ENDED})
+          </button>
+        </div>
+      </div>
+
+      <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
+        {err && (
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 12,
+              border: "1px solid #3a1f1f",
+              background: "#1a1111",
+              color: "white",
+              fontWeight: 800,
+            }}
+          >
+            {err}
+          </div>
+        )}
+
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          {filtered.map((l) => {
             const img = resolveImage(l.imageUrl);
-            const badge = statusBadge(l.status);
+            const badge = statusBadge(normalizeStatus(l.status));
 
             return (
               <Link
@@ -137,9 +247,8 @@ export default function HomePage() {
                   alignItems: "center",
                   padding: 12,
                   borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(15,15,15,0.82)",
-                  backdropFilter: "blur(6px)",
+                  border: "1px solid #2c2c2c",
+                  background: "rgba(15,15,15,0.92)",
                   color: "white",
                   textDecoration: "none",
                 }}
@@ -150,8 +259,8 @@ export default function HomePage() {
                     height: 64,
                     borderRadius: 12,
                     overflow: "hidden",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    background: "rgba(17,17,17,0.9)",
+                    border: "1px solid #333",
+                    background: "#111",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -165,7 +274,9 @@ export default function HomePage() {
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                     />
                   ) : (
-                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 800 }}>NO IMG</div>
+                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 800 }}>
+                      NO IMG
+                    </div>
                   )}
                 </div>
 
@@ -182,9 +293,13 @@ export default function HomePage() {
                   >
                     {l.title}
                   </div>
-                  <div style={{ marginTop: 6, opacity: 0.9, fontWeight: 900 }}>
+
+                  <div style={{ marginTop: 6, opacity: 0.85, fontWeight: 900 }}>
                     ₴{l.currentPrice}
-                    <span style={{ opacity: 0.65, fontWeight: 800 }}> / крок ₴{l.bidStep}</span>
+                    <span style={{ opacity: 0.65, fontWeight: 800 }}>
+                      {" "}
+                      / крок ₴{l.bidStep}
+                    </span>
                   </div>
                 </div>
 
@@ -203,88 +318,13 @@ export default function HomePage() {
               </Link>
             );
           })}
+
+          {filtered.length === 0 && !err && (
+            <div style={{ opacity: 0.7, fontWeight: 800, textAlign: "center", marginTop: 18 }}>
+              Нічого не знайдено
+            </div>
+          )}
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        color: "white",
-        backgroundImage:
-          "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.88)), url('/bg.jpg')",
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundAttachment: "fixed",
-      }}
-    >
-      {/* Шапка */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-          background: "rgba(10,10,10,0.75)",
-          backdropFilter: "blur(10px)",
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
-          padding: "14px 16px 12px",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.5 }}>ГОЛОВНА</div>
-        <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
-          HW HUNTER AUCTION
-        </div>
-      </div>
-
-      <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
-        {/* ✅ Поиск */}
-        <div style={{ marginTop: 8 }}>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Пошук лотів…"
-            style={{
-              width: "100%",
-              padding: "12px 12px",
-              borderRadius: 14,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(0,0,0,0.45)",
-              color: "white",
-              outline: "none",
-              fontWeight: 800,
-            }}
-          />
-        </div>
-
-        {err && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid #3a1f1f",
-              background: "rgba(26,17,17,0.85)",
-              color: "white",
-              fontWeight: 800,
-            }}
-          >
-            {err}
-          </div>
-        )}
-
-        {/* ✅ Разделы */}
-        <Section title="🔥 LIVE" items={groups.live} />
-        <Section title="⏳ СКОРО" items={groups.soon} />
-        <Section title="✅ ЗАВЕРШЕНО" items={groups.ended} />
-
-        {filteredLots.length === 0 && !err && (
-          <div style={{ opacity: 0.7, fontWeight: 800, textAlign: "center", marginTop: 18 }}>
-            Нічого не знайдено
-          </div>
-        )}
       </div>
     </div>
   );
