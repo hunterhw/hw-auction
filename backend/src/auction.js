@@ -33,11 +33,16 @@ export async function createLot({
    LIST LOTS
 ================================ */
 export async function listLots() {
+  // Показываем все лоты, кроме завершённых "удалённых".
+  // Если у тебя нет статуса DELETED в Prisma enum — НЕ используй его в фильтре.
   return prisma.lot.findMany({
-    where: { status: { not: "DELETED" } },
+    // Если хочешь показывать только активные и завершенные:
+    where: { status: { in: ["LIVE", "ENDED"] } },
     orderBy: { endsAt: "asc" },
   });
 }
+
+
 
 /* ===============================
    GET LOT
