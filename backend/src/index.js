@@ -52,6 +52,35 @@ if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN is missing. Set it in Render env");
   process.exit(1);
 }
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function tgSendMessage(userId, text, extra = {}) {
+  if (!BOT_TOKEN) return { ok: false, error: "NO_BOT_TOKEN" };
+
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: userId, // в приватке userId == chatId
+        text,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        ...extra,
+      }),
+    });
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
 
 // --- helpers ---
 async function checkSubscription(userId) {
@@ -187,6 +216,38 @@ app.post("/lots/:id/bid", async (req, res) => {
       userName: user.username ? `@${user.username}` : `${user.first_name || "Користувач"}`,
       amount: numAmount,
     });
+// ✅ уведомление "перебили ставку"
+try {
+  const prevId = result?.outbid?.userId ? String(result.outbid.userId) : null;
+
+  // если был лидер и это не тот же человек, что поставил сейчас
+  if (prevId && prevId !== String(user.id)) {
+    const lotTitle = escHtml(result?.lot?.title || "Лот");
+    const newPrice = escHtml(result?.lot?.currentPrice);
+    const lotUrl = WEBAPP_URL ? `${WEBAPP_URL}/lot/${req.params.id}` : "";
+
+    const msg =
+      `⚡️ Твою ставку перебили!\n` +
+      `<b>${lotTitle}</b>\n` +
+      `Нова ціна: <b>₴${newPrice}</b>\n` +
+      (lotUrl ? `\n👉 Відкрити лот: ${escHtml(lotUrl)}` : "");
+
+    // можно кнопкой
+    const extra =
+      lotUrl
+        ? { reply_markup: { inline_keyboard: [[{ text: "Відкрити лот", url: lotUrl }]] } }
+        : {};
+
+    const sent = await tgSendMessage(prevId, msg, extra);
+
+    // если юзер не стартовал бота — Telegram вернет ошибку, просто игнорим
+    if (!sent?.ok) {
+      console.log("OUTBID_NOTIFY_FAIL:", sent);
+    }
+  }
+} catch (e) {
+  console.log("OUTBID_NOTIFY_ERROR:", e);
+}
 
     broadcastToLot(req.params.id, {
       type: "BID_PLACED",
