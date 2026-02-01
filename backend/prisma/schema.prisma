@@ -21,6 +21,7 @@ model Lot {
   endsAt       DateTime
   createdAt    DateTime  @default(now())
   bids         Bid[]
+  endedNotifiedAt DateTime? // чтобы “победа/проигрыш” не слать 100 раз
 }
 
 model Bid {
@@ -40,4 +41,19 @@ enum LotStatus {
   SCHEDULED
   LIVE
   ENDED
+}
+model AutoBid {
+  id         String   @id @default(cuid())
+  lotId      String
+  userId     String
+  userName   String
+  maxAmount  Int
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  lot Lot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  @@unique([lotId, userId])
+  @@index([lotId, maxAmount])
 }
