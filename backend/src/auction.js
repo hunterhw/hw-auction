@@ -125,6 +125,10 @@ export async function placeBid({ lotId, userId, userName, amount }) {
     let lot = await tx.lot.findUnique({ where: { id: lotIdStr } });
     if (!lot) throw new Error("LOT_NOT_FOUND");
 
+    // сохраним предыдущего лидера ДО обновления
+    const prevLeaderUserId = lot.leaderUserId ? String(lot.leaderUserId) : null;
+    const prevLeaderPrice = Number(lot.currentPrice || 0);
+
     // обновим статус по времени
     const nextStatus = computeStatus(lot);
     if (nextStatus !== lot.status) {
@@ -145,7 +149,6 @@ export async function placeBid({ lotId, userId, userName, amount }) {
       where: {
         id: lotIdStr,
         status: "LIVE",
-        // эквивалент: amt >= currentPrice + bidStep
         currentPrice: { lte: amt - lot.bidStep },
       },
       data: {
@@ -155,7 +158,6 @@ export async function placeBid({ lotId, userId, userName, amount }) {
     });
 
     if (updated.count !== 1) {
-      // кто-то успел обновить цену раньше тебя
       const fresh = await tx.lot.findUnique({ where: { id: lotIdStr } });
       const freshMin = (fresh?.currentPrice || 0) + (fresh?.bidStep || 0);
       throw new Error("MIN_BID_" + freshMin);
@@ -173,9 +175,17 @@ export async function placeBid({ lotId, userId, userName, amount }) {
 
     const updatedLot = await tx.lot.findUnique({ where: { id: lotIdStr } });
 
-    return { bid, lot: updatedLot };
+    return {
+      bid,
+      lot: updatedLot,
+      outbid: {
+        userId: prevLeaderUserId,
+        price: prevLeaderPrice,
+      },
+    };
   });
 }
+
 
 /* ===============================
    DELETE LOT (ADMIN / BOT)
