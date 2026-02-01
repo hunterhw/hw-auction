@@ -1,9 +1,9 @@
-import { createLot } from "./auction.js";
+import { createLot, deleteLot, listLots } from "./auction.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
-import { createLot } from "./auction.js";
+
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
