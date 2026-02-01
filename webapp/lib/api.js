@@ -1,6 +1,8 @@
 import { getInitData, waitForInitData } from "./tg";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE || "https://hw-auction-backend.onrender.com";
+
 
 async function headersForGet() {
   const initData = getInitData();
