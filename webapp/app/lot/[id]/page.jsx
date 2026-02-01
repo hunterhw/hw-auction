@@ -31,6 +31,21 @@ function openSubscribe(url) {
   } catch {}
   window.open(url, "_blank");
 }
+function resolveImage(url) {
+  if (!url) return null;
+
+  // полный URL
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+
+  // uploads на бекенде
+  if (url.startsWith("/uploads/")) {
+    const base = process.env.NEXT_PUBLIC_API_BASE || "";
+    return `${base}${url}`;
+  }
+
+  // остальное типа "/bmw-sth.jpg" — это public фронта
+  return url;
+}
 
 export default function LotPage({ params }) {
   const lotId = params.id;
@@ -227,6 +242,7 @@ export default function LotPage({ params }) {
   }
 
   const showSubscribe = err === "NOT_SUBSCRIBED";
+  const imgSrc = resolveImage(lot.imageUrl);
 
   return (
     <>
@@ -334,10 +350,10 @@ export default function LotPage({ params }) {
 
         <div style={{ position: "relative", marginTop: 10 }}>
           <img
-            src={lot.imageUrl}
-            alt={lot.title}
-            style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
-          />
+  src={imgSrc || ""}
+  alt={lot.title}
+  style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
+/>
 
           <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 8 }}>
             {toasts.map((t) => (
