@@ -7,6 +7,7 @@ globalThis.__prisma = prisma;
    HELPERS
 ================================ */
 function computeStatus(lot) {
+  if (!lot) return "ENDED";
   if (lot.status === "ENDED") return "ENDED";
 
   const now = Date.now();
@@ -77,10 +78,7 @@ export async function getLot(id) {
   const lot = await prisma.lot.findUnique({
     where: { id: String(id) },
     include: {
-      bids: {
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      },
+      bids: { orderBy: { createdAt: "desc" }, take: 50 },
     },
   });
 
@@ -136,7 +134,8 @@ export async function placeBid({ lotId, userId, userName, amount }) {
       where: {
         id: lotIdStr,
         status: "LIVE",
-        currentPrice: { lte: amt - lot.bidStep }, // то же что amt >= currentPrice + bidStep
+        // эквивалент: amt >= currentPrice + bidStep
+        currentPrice: { lte: amt - lot.bidStep },
       },
       data: {
         currentPrice: amt,
@@ -166,9 +165,13 @@ export async function placeBid({ lotId, userId, userName, amount }) {
     return { bid, lot: updatedLot };
   });
 }
+
+/* ===============================
+   DELETE LOT (ADMIN / BOT)
+   - удалит лот + bids (Cascade в schema)
+================================ */
 export async function deleteLot(lotId) {
   const id = String(lotId);
-  // удалит лот + все bids (из-за onDelete: Cascade)
   return prisma.lot.delete({
     where: { id },
   });
