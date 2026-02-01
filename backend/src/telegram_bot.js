@@ -114,7 +114,6 @@ function setSt(adminId, st) {
 
 /* =========================
    ✅ MENU COMMANDS (Telegram /)
-   Появится меню команд у бота
 ========================= */
 async function setMyCommands() {
   return tg("setMyCommands", {
@@ -174,7 +173,7 @@ export async function telegramWebhook(req, res) {
         const lots = await listLots();
 
         if (!lots?.length) {
-          await sendMessage(chatId, "Поки що лотів немає.");
+          await sendMessage(chatId, "Поки що лотів немає.", adminMenuKeyboard());
           return res.json({ ok: true });
         }
 
@@ -228,7 +227,11 @@ export async function telegramWebhook(req, res) {
 
         try {
           await deleteLot(lotId);
-          await sendMessage(chatId, `🗑 Лот видалено: <code>${lotId}</code>`, adminMenuKeyboard());
+          await sendMessage(
+            chatId,
+            `🗑 Лот видалено: <code>${lotId}</code>`,
+            adminMenuKeyboard()
+          );
         } catch (e) {
           await sendMessage(
             chatId,
@@ -250,10 +253,17 @@ export async function telegramWebhook(req, res) {
 
     const chatId = msg.chat?.id;
     const fromId = msg.from?.id;
+
+    // текст/команда
     const text = (msg.text || "").trim();
 
+    // ✅ ВАЖНО: нормализация команд
+    // /start@BotName -> /start
+    // /start payload -> /start
+    const cmd = text.split(/\s+/)[0].replace(/@[\w_]+$/, "").toLowerCase();
+
     // /myid
-    if (text === "/myid") {
+    if (cmd === "/myid") {
       await sendMessage(chatId, `Ваш ID: <code>${fromId}</code>`);
       return res.json({ ok: true });
     }
@@ -264,8 +274,8 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // /start (✅ ставим меню команд + показываем кнопки)
-    if (text === "/start") {
+    // /start
+    if (cmd === "/start") {
       await setMyCommands();
       await sendMessage(
         chatId,
@@ -276,14 +286,14 @@ export async function telegramWebhook(req, res) {
     }
 
     // /cancel
-    if (text === "/cancel") {
+    if (cmd === "/cancel") {
       reset(fromId);
       await sendMessage(chatId, "✅ Скасовано.", adminMenuKeyboard());
       return res.json({ ok: true });
     }
 
     // /lots
-    if (text === "/lots") {
+    if (cmd === "/lots") {
       const lots = await listLots();
 
       if (!lots?.length) {
@@ -308,7 +318,7 @@ export async function telegramWebhook(req, res) {
     }
 
     // /dellot <id>
-    if (text.startsWith("/dellot")) {
+    if (cmd === "/dellot") {
       const parts = text.split(" ").filter(Boolean);
       const lotId = parts[1];
 
@@ -335,7 +345,7 @@ export async function telegramWebhook(req, res) {
     }
 
     // /newlot
-    if (text === "/newlot") {
+    if (cmd === "/newlot") {
       setSt(fromId, { step: "TITLE", data: {} });
       await sendMessage(
         chatId,
@@ -395,7 +405,10 @@ export async function telegramWebhook(req, res) {
       st.step = "START_PRICE";
       setSt(fromId, st);
 
-      await sendMessage(chatId, "3/5 Введи <b>стартову ціну</b> (грн), напр: <code>80</code>");
+      await sendMessage(
+        chatId,
+        "3/5 Введи <b>стартову ціну</b> (грн), напр: <code>80</code>"
+      );
       return res.json({ ok: true });
     }
 
