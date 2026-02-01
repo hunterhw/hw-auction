@@ -8,43 +8,34 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 
 import { telegramWebhook } from "./telegram_bot.js";
-import adminRouter from "./admin.js";
-
-import { listLots, getLot, placeBid, createLot } from "./auction.js";
+import { listLots, getLot, placeBid } from "./auction.js";
 import { verifyTelegramInitData, parseUserFromInitData } from "./telegram.js";
 
 const app = express();
 
-// --- CORS (аккуратно для Telegram/iOS) ---
+// --- CORS ---
 app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "x-telegram-initdata"],
+    allowedHeaders: ["Content-Type", "x-telegram-initdata", "x-telegram-bot-api-secret-token"],
   })
 );
 app.options("*", cors());
 
-// json
+// --- body parsers (Telegram шлёт JSON) ---
 app.use(express.json({ limit: "5mb" }));
 
-// paths
+// --- paths ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// uploads папка: backend/uploads (або ../uploads від src)
+// uploads folder
 const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-// отдача загруженных файлов
 app.use("/uploads", express.static(uploadsDir));
 
-// ✅ Telegram webhook (ТОЛЬКО ОДИН)
-app.post("/telegram/webhook", telegramWebhook);
-
-// admin роутер (если используешь)
-app.use("/admin", adminRouter);
-
+// --- ENV ---
 const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN; // required
 const CHANNEL_ID = process.env.CHANNEL_ID; // "@hw_hunter_ua" or -100...
@@ -55,12 +46,12 @@ const CHANNEL_URL =
     : null);
 
 if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN is missing. Set it in env (Render)");
+  console.error("❌ BOT_TOKEN is missing. Set it in Render env");
   process.exit(1);
 }
 
+// --- helpers ---
 async function checkSubscription(userId) {
-  // если канал не задан — подписка не нужна
   if (!CHANNEL_ID) return { ok: true };
 
   const url =
@@ -71,10 +62,7 @@ async function checkSubscription(userId) {
     const res = await fetch(url);
     const data = await res.json();
 
-    // если бот не админ/нет прав — Telegram вернет ok:false
-    if (!data?.ok) {
-      return { ok: false, reason: "TG_API_ERROR", tg: data };
-    }
+    if (!data?.ok) return { ok: false, reason: "TG_API_ERROR", tg: data };
 
     const status = data?.result?.status;
     const ok = ["creator", "administrator", "member"].includes(status);
@@ -87,7 +75,7 @@ async function checkSubscription(userId) {
 function authFromInitData(req) {
   const initData = req.headers["x-telegram-initdata"];
 
-  // Desktop fallback: без initData можно только смотреть
+  // Desktop fallback
   if (!initData || typeof initData !== "string" || initData.length === 0) return null;
 
   if (!verifyTelegramInitData(initData, BOT_TOKEN)) throw new Error("BAD_INITDATA");
@@ -103,27 +91,31 @@ function normalizeLotPayload(rawLot) {
   return { lot: cleanLot, bids };
 }
 
-// --- routes ---
+// --- health ---
 app.get("/health", (_, res) => res.json({ ok: true }));
 
-// список лотов
+// ✅ IMPORTANT: webhook route MUST exist (Telegram gets 200)
+app.post("/telegram/webhook", async (req, res) => {
+  try {
+    console.log("TG UPDATE:", JSON.stringify(req.body));
+    await telegramWebhook(req, res); // твой обработчик сам вернёт ok:true
+  } catch (e) {
+    console.error("telegram webhook error:", e);
+    // Telegram важно получить 200
+    return res.status(200).json({ ok: true });
+  }
+});
+
+// --- API routes ---
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
     const lots = await listLots();
 
-    // browser/desktop: просмотр
     if (!user) return res.json({ lots, viewOnly: true });
 
-    // Telegram: подписка
     const sub = await checkSubscription(user.id);
     if (!sub.ok) {
-      console.warn("NOT_SUBSCRIBED / SUB_CHECK_FAIL:", {
-        userId: user.id,
-        status: sub.status,
-        reason: sub.reason,
-      });
-
       return res.status(403).json({
         lots,
         viewOnly: true,
@@ -139,7 +131,6 @@ app.get("/lots", async (req, res) => {
   }
 });
 
-// один лот + ставки
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -149,10 +140,8 @@ app.get("/lots/:id", async (req, res) => {
 
     if (!lot) return res.json({ lot: null, bids: [], viewOnly: true, reason: "NOT_FOUND" });
 
-    // browser/desktop: просмотр
     if (!user) return res.json({ lot, bids, viewOnly: true });
 
-    // Telegram: если нет подписки — можно смотреть, но писать, что нет подписки
     const sub = await checkSubscription(user.id);
     if (!sub.ok) {
       return res.status(403).json({
@@ -171,7 +160,6 @@ app.get("/lots/:id", async (req, res) => {
   }
 });
 
-// ставка
 app.post("/lots/:id/bid", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -213,54 +201,16 @@ app.post("/lots/:id/bid", async (req, res) => {
   }
 });
 
-// ===== ADMIN: создать лот через API (можно оставить) =====
-const ADMIN_KEY = process.env.ADMIN_KEY || "";
-
-app.post("/admin/lots", async (req, res) => {
-  try {
-    const { adminKey, title, imageUrl, startPrice, bidStep, durationMin } = req.body || {};
-
-    if (!ADMIN_KEY || String(adminKey || "") !== String(ADMIN_KEY)) {
-      return res.status(401).json({ error: "ADMIN_DENIED" });
-    }
-
-    const sp = Number(startPrice);
-    const bs = Number(bidStep);
-    const dm = Number(durationMin || 60);
-
-    if (!title || !Number.isFinite(sp) || !Number.isFinite(bs) || !Number.isFinite(dm)) {
-      return res.status(400).json({ error: "BAD_PAYLOAD" });
-    }
-
-    const endsAt = new Date(Date.now() + dm * 60 * 1000);
-
-    const lot = await createLot({
-      title: String(title),
-      imageUrl: String(imageUrl || ""),
-      startPrice: sp,
-      bidStep: bs,
-      endsAt,
-    });
-
-    return res.json({ ok: true, lot });
-  } catch (e) {
-    console.error("ADMIN CREATE LOT ERROR:", e);
-    return res.status(500).json({ error: "SERVER_ERROR" });
-  }
-});
-
 // --- WS ---
 const server = app.listen(PORT, () => console.log("✅ Backend on", PORT));
 const wss = new WebSocketServer({ server });
 
-const lotRooms = new Map(); // lotId -> Set(ws)
+const lotRooms = new Map();
 
 function broadcastToLot(lotId, payload) {
   const room = lotRooms.get(lotId);
   if (!room) return;
-
   const msg = JSON.stringify(payload);
-
   for (const ws of room) {
     if (ws.readyState === ws.OPEN) {
       try {
@@ -281,7 +231,6 @@ wss.on("connection", (ws) => {
   ws.on("message", async (raw) => {
     try {
       const data = JSON.parse(raw.toString());
-
       if (data?.type === "JOIN_LOT") {
         const lotId = String(data.lotId || "");
         if (!lotId) return;
