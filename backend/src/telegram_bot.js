@@ -11,18 +11,19 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .filter(Boolean);
 
 const WEBAPP_URL = process.env.WEBAPP_URL || "";
-const PUBLIC_BASE = process.env.PUBLIC_BASE || "";
+
+// ✅ ПАПКА ДЛЯ ФОТО (делай Render Disk и ставь /var/data/uploads)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsDir = process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.join(__dirname, "../uploads");
+
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN is missing (Render env)");
 }
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// uploads папка: backend/uploads (больше не нужна для лотов, но оставим)
-const uploadsDir = path.join(__dirname, "../uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 // Простий “стан діалогу” в памʼяті (для кількох адмінів)
 const state = new Map(); // adminId -> { step, data }
@@ -92,14 +93,13 @@ async function getFilePath(fileId) {
   return r.result.file_path;
 }
 
-// Эти функции больше не нужны для лотов (мы не скачиваем файл), но можно оставить
 async function downloadTelegramFile(filePath) {
   const url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("DOWNLOAD_FAILED");
-  const buf = Buffer.from(await res.arrayBuffer());
-  return buf;
+  return Buffer.from(await res.arrayBuffer());
 }
+
 function newName(ext = ".jpg") {
   return crypto.randomBytes(16).toString("hex") + ext;
 }
@@ -163,7 +163,6 @@ export async function telegramWebhook(req, res) {
         return res.json({ ok: true });
       }
 
-      // меню кнопки
       if (data === "MENU_NEWLOT") {
         await answerCallbackQuery(cq.id, "Створення лоту");
         setSt(fromId, { step: "TITLE", data: {} });
@@ -199,7 +198,6 @@ export async function telegramWebhook(req, res) {
         return res.json({ ok: true });
       }
 
-      // CANCEL
       if (data === "CANCEL") {
         reset(fromId);
         await answerCallbackQuery(cq.id, "Скасовано");
@@ -207,10 +205,8 @@ export async function telegramWebhook(req, res) {
         return res.json({ ok: true });
       }
 
-      // удалить лот: запрос подтверждения
       if (data.startsWith("DELLOT:")) {
         const lotId = data.slice("DELLOT:".length);
-
         await answerCallbackQuery(cq.id, "Підтвердіть видалення");
         await sendMessage(
           chatId,
@@ -225,10 +221,8 @@ export async function telegramWebhook(req, res) {
         return res.json({ ok: true });
       }
 
-      // подтверждение удаления
       if (data.startsWith("DELLOT_CONFIRM:")) {
         const lotId = data.slice("DELLOT_CONFIRM:".length);
-
         await answerCallbackQuery(cq.id, "Видаляю...");
         try {
           await deleteLot(lotId);
@@ -259,7 +253,6 @@ export async function telegramWebhook(req, res) {
     const fromId = msg.from?.id;
     const text = (msg.text || "").trim();
 
-    // нормализация команд (/start@BotName)
     const cmd = text.split(/\s+/)[0].replace(/@[\w_]+$/, "").toLowerCase();
 
     if (cmd === "/myid") {
@@ -267,7 +260,6 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // если не админ
     if (!isAdmin(fromId)) {
       await sendMessage(chatId, "⛔️ У вас немає доступу.");
       return res.json({ ok: true });
@@ -366,9 +358,7 @@ export async function telegramWebhook(req, res) {
       return res.json({ ok: true });
     }
 
-    // ✅ STEP: PHOTO — ВАЖНОЕ ИЗМЕНЕНИЕ:
-    // Не сохраняем в uploads (после деплоя пропадает),
-    // а сохраняем прямую ссылку на файл Telegram
+    // ✅ STEP: PHOTO — снова скачиваем на сервер (БЕЗ утечки BOT_TOKEN)
     if (st.step === "PHOTO") {
       const photos = msg.photo;
 
@@ -379,9 +369,15 @@ export async function telegramWebhook(req, res) {
 
       const best = photos[photos.length - 1];
       const filePath = await getFilePath(best.file_id);
+      const buf = await downloadTelegramFile(filePath);
 
-      // ✅ Telegram-hosted image (не слетит после деплоя)
-      st.data.imageUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+      const ext = path.extname(filePath) || ".jpg";
+      const fname = newName(ext);
+
+      fs.writeFileSync(path.join(uploadsDir, fname), buf);
+
+      // ✅ В БД храним относительный путь
+      st.data.imageUrl = `/uploads/${fname}`;
 
       st.step = "START_PRICE";
       setSt(fromId, st);
