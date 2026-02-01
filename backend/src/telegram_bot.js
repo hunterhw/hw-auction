@@ -100,7 +100,7 @@ export async function telegramWebhook(req, res) {
     const upd = req.body || {};
 
     // ✅ ЛОГ ДЛЯ ДЕБАГА (самое важное)
-    console.log("TG UPDATE:", JSON.stringify(upd));
+  
 
     // 1) callback кнопки
     if (upd?.callback_query) {
