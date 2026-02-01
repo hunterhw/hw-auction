@@ -22,6 +22,8 @@ model Lot {
   createdAt    DateTime  @default(now())
   bids         Bid[]
   endedNotifiedAt DateTime? // чтобы “победа/проигрыш” не слать 100 раз
+
+  autoBids        AutoBid[]
 }
 
 model Bid {
