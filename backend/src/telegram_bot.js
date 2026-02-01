@@ -4,7 +4,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 
-
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .split(",")
@@ -13,6 +12,10 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "")
 
 const WEBAPP_URL = process.env.WEBAPP_URL || "";
 const PUBLIC_BASE = process.env.PUBLIC_BASE || "";
+
+if (!BOT_TOKEN) {
+  console.error("❌ BOT_TOKEN is missing (Render env)");
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,12 +33,25 @@ function isAdmin(userId) {
 
 async function tg(method, body) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
+
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return res.json();
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = { ok: false, description: "BAD_JSON_FROM_TELEGRAM" };
+  }
+
+  if (!data?.ok) {
+    console.error("❌ TG API ERROR:", method, data);
+  }
+
+  return data;
 }
 
 async function sendMessage(chatId, text, extra = {}) {
@@ -100,9 +116,6 @@ export async function telegramWebhook(req, res) {
   try {
     const upd = req.body || {};
 
-    // ✅ ЛОГ ДЛЯ ДЕБАГА (самое важное)
-  
-
     // 1) callback кнопки
     if (upd?.callback_query) {
       const cq = upd.callback_query;
@@ -121,9 +134,13 @@ export async function telegramWebhook(req, res) {
         await sendMessage(chatId, "✅ Скасовано. Напиши /newlot щоб почати знову.");
         return res.json({ ok: true });
       }
+
       // удалить лот: запрос подтверждения
       if (data.startsWith("DELLOT:")) {
         const lotId = data.slice("DELLOT:".length);
+
+        await answerCallbackQuery(cq.id, "Підтвердіть видалення");
+
         await sendMessage(
           chatId,
           `⚠️ Видалити лот?\n<code>${lotId}</code>\n\nЦе видалить лот і всі ставки назавжди.`,
@@ -140,6 +157,8 @@ export async function telegramWebhook(req, res) {
       // подтверждение удаления
       if (data.startsWith("DELLOT_CONFIRM:")) {
         const lotId = data.slice("DELLOT_CONFIRM:".length);
+
+        await answerCallbackQuery(cq.id, "Видаляю...");
 
         try {
           await deleteLot(lotId);
@@ -177,8 +196,10 @@ export async function telegramWebhook(req, res) {
 
     // /start
     if (text === "/start") {
-      await sendMessage(chatId, "👋 Адмін меню:\n/newlot — створити лот\n/lots — список лотів\n/dellot <id> — видалити по ID\n/cancel — скасувати"
-);
+      await sendMessage(
+        chatId,
+        "👋 Адмін меню:\n/newlot — створити лот\n/lots — список лотів\n/dellot <id> — видалити по ID\n/cancel — скасувати"
+      );
       return res.json({ ok: true });
     }
 
@@ -188,6 +209,7 @@ export async function telegramWebhook(req, res) {
       await sendMessage(chatId, "✅ Скасовано.");
       return res.json({ ok: true });
     }
+
     // /lots — список лотов + кнопки удаления
     if (text === "/lots") {
       const lots = await listLots();
@@ -197,8 +219,8 @@ export async function telegramWebhook(req, res) {
         return res.json({ ok: true });
       }
 
-      // покажем последние 10
-      const last = lots.slice(0, 10);
+      // последние 10, новые сверху
+      const last = lots.slice(-10).reverse();
 
       for (const l of last) {
         await sendMessage(
@@ -214,13 +236,17 @@ export async function telegramWebhook(req, res) {
       await sendMessage(chatId, "Готово ✅");
       return res.json({ ok: true });
     }
+
     // /dellot <id> — удалить лот по ID
     if (text.startsWith("/dellot")) {
       const parts = text.split(" ").filter(Boolean);
       const lotId = parts[1];
 
       if (!lotId) {
-        await sendMessage(chatId, "Використання: <code>/dellot LOT_ID</code>\nАбо <code>/lots</code> щоб вибрати кнопкою.");
+        await sendMessage(
+          chatId,
+          "Використання: <code>/dellot LOT_ID</code>\nАбо <code>/lots</code> щоб вибрати кнопкою."
+        );
         return res.json({ ok: true });
       }
 
@@ -282,8 +308,9 @@ export async function telegramWebhook(req, res) {
       const fname = newName(ext);
       fs.writeFileSync(path.join(uploadsDir, fname), buf);
 
-      // шлях який відкриється з фронта: бекенд роздає /uploads
+      // путь для фронта: бекенд раздает /uploads
       if (!PUBLIC_BASE) {
+        reset(fromId);
         await sendMessage(
           chatId,
           "⚠️ PUBLIC_BASE не заданий. Додай PUBLIC_BASE у Render, наприклад:\n<code>https://hw-auction-backend.onrender.com</code>"
