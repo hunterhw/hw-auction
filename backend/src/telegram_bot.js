@@ -121,6 +121,35 @@ export async function telegramWebhook(req, res) {
         await sendMessage(chatId, "✅ Скасовано. Напиши /newlot щоб почати знову.");
         return res.json({ ok: true });
       }
+      // удалить лот: запрос подтверждения
+      if (data.startsWith("DELLOT:")) {
+        const lotId = data.slice("DELLOT:".length);
+        await sendMessage(
+          chatId,
+          `⚠️ Видалити лот?\n<code>${lotId}</code>\n\nЦе видалить лот і всі ставки назавжди.`,
+          kb([
+            [
+              { text: "✅ Так, видалити", callback_data: `DELLOT_CONFIRM:${lotId}` },
+              { text: "❌ Скасувати", callback_data: "CANCEL" },
+            ],
+          ])
+        );
+        return res.json({ ok: true });
+      }
+
+      // подтверждение удаления
+      if (data.startsWith("DELLOT_CONFIRM:")) {
+        const lotId = data.slice("DELLOT_CONFIRM:".length);
+
+        try {
+          await deleteLot(lotId);
+          await sendMessage(chatId, `🗑 Лот видалено: <code>${lotId}</code>`);
+        } catch (e) {
+          await sendMessage(chatId, `❌ Не вдалось видалити.\n${String(e?.message || e)}`);
+        }
+
+        return res.json({ ok: true });
+      }
 
       await answerCallbackQuery(cq.id, "OK");
       return res.json({ ok: true });
@@ -148,7 +177,8 @@ export async function telegramWebhook(req, res) {
 
     // /start
     if (text === "/start") {
-      await sendMessage(chatId, "👋 Адмін меню:\n/newlot — створити лот\n/cancel — скасувати");
+      await sendMessage(chatId, "👋 Адмін меню:\n/newlot — створити лот\n/lots — список лотів\n/dellot <id> — видалити по ID\n/cancel — скасувати"
+);
       return res.json({ ok: true });
     }
 
@@ -156,6 +186,54 @@ export async function telegramWebhook(req, res) {
     if (text === "/cancel") {
       reset(fromId);
       await sendMessage(chatId, "✅ Скасовано.");
+      return res.json({ ok: true });
+    }
+    // /lots — список лотов + кнопки удаления
+    if (text === "/lots") {
+      const lots = await listLots();
+
+      if (!lots?.length) {
+        await sendMessage(chatId, "Поки що лотів немає.");
+        return res.json({ ok: true });
+      }
+
+      // покажем последние 10
+      const last = lots.slice(0, 10);
+
+      for (const l of last) {
+        await sendMessage(
+          chatId,
+          `<b>${l.title}</b>\n` +
+            `ID: <code>${l.id}</code>\n` +
+            `Статус: <b>${l.status}</b>\n` +
+            `Ціна: ₴${l.currentPrice} (крок ₴${l.bidStep})`,
+          kb([[{ text: "🗑 Видалити", callback_data: `DELLOT:${l.id}` }]])
+        );
+      }
+
+      await sendMessage(chatId, "Готово ✅");
+      return res.json({ ok: true });
+    }
+    // /dellot <id> — удалить лот по ID
+    if (text.startsWith("/dellot")) {
+      const parts = text.split(" ").filter(Boolean);
+      const lotId = parts[1];
+
+      if (!lotId) {
+        await sendMessage(chatId, "Використання: <code>/dellot LOT_ID</code>\nАбо <code>/lots</code> щоб вибрати кнопкою.");
+        return res.json({ ok: true });
+      }
+
+      await sendMessage(
+        chatId,
+        `⚠️ Підтвердь видалення лоту:\n<code>${lotId}</code>`,
+        kb([
+          [
+            { text: "✅ Так, видалити", callback_data: `DELLOT_CONFIRM:${lotId}` },
+            { text: "❌ Скасувати", callback_data: "CANCEL" },
+          ],
+        ])
+      );
       return res.json({ ok: true });
     }
 
