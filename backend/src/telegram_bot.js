@@ -31,6 +31,17 @@ function isAdmin(userId) {
   return ADMIN_IDS.includes(String(userId));
 }
 
+/* =========================
+   ✅ HTML ESCAPE (fix TG "can't parse entities")
+   Любой динамический текст (title, id, username) прогоняй через escHtml
+========================= */
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function tg(method, body) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
 
@@ -57,7 +68,7 @@ async function tg(method, body) {
 async function sendMessage(chatId, text, extra = {}) {
   return tg("sendMessage", {
     chat_id: chatId,
-    text,
+    text: String(text),
     parse_mode: "HTML",
     disable_web_page_preview: true,
     ...extra,
@@ -65,9 +76,10 @@ async function sendMessage(chatId, text, extra = {}) {
 }
 
 async function answerCallbackQuery(id, text) {
+  // callback query тоже может падать, но там parse_mode нет — просто текст
   return tg("answerCallbackQuery", {
     callback_query_id: id,
-    text,
+    text: String(text),
     show_alert: false,
   });
 }
@@ -181,10 +193,10 @@ export async function telegramWebhook(req, res) {
         for (const l of last) {
           await sendMessage(
             chatId,
-            `<b>${l.title}</b>\n` +
-              `ID: <code>${l.id}</code>\n` +
-              `Статус: <b>${l.status}</b>\n` +
-              `Ціна: ₴${l.currentPrice} (крок ₴${l.bidStep})`,
+            `<b>${escHtml(l.title)}</b>\n` +
+              `ID: <code>${escHtml(l.id)}</code>\n` +
+              `Статус: <b>${escHtml(l.status)}</b>\n` +
+              `Ціна: ₴${escHtml(l.currentPrice)} (крок ₴${escHtml(l.bidStep)})`,
             kb([[{ text: "🗑 Видалити", callback_data: `DELLOT:${l.id}` }]])
           );
         }
@@ -208,7 +220,7 @@ export async function telegramWebhook(req, res) {
 
         await sendMessage(
           chatId,
-          `⚠️ Видалити лот?\n<code>${lotId}</code>\n\nЦе видалить лот і всі ставки назавжди.`,
+          `⚠️ Видалити лот?\n<code>${escHtml(lotId)}</code>\n\nЦе видалить лот і всі ставки назавжди.`,
           kb([
             [
               { text: "✅ Так, видалити", callback_data: `DELLOT_CONFIRM:${lotId}` },
@@ -229,13 +241,13 @@ export async function telegramWebhook(req, res) {
           await deleteLot(lotId);
           await sendMessage(
             chatId,
-            `🗑 Лот видалено: <code>${lotId}</code>`,
+            `🗑 Лот видалено: <code>${escHtml(lotId)}</code>`,
             adminMenuKeyboard()
           );
         } catch (e) {
           await sendMessage(
             chatId,
-            `❌ Не вдалось видалити.\n${String(e?.message || e)}`,
+            `❌ Не вдалось видалити.\n${escHtml(String(e?.message || e))}`,
             adminMenuKeyboard()
           );
         }
@@ -264,7 +276,7 @@ export async function telegramWebhook(req, res) {
 
     // /myid
     if (cmd === "/myid") {
-      await sendMessage(chatId, `Ваш ID: <code>${fromId}</code>`);
+      await sendMessage(chatId, `Ваш ID: <code>${escHtml(fromId)}</code>`);
       return res.json({ ok: true });
     }
 
@@ -305,10 +317,10 @@ export async function telegramWebhook(req, res) {
       for (const l of last) {
         await sendMessage(
           chatId,
-          `<b>${l.title}</b>\n` +
-            `ID: <code>${l.id}</code>\n` +
-            `Статус: <b>${l.status}</b>\n` +
-            `Ціна: ₴${l.currentPrice} (крок ₴${l.bidStep})`,
+          `<b>${escHtml(l.title)}</b>\n` +
+            `ID: <code>${escHtml(l.id)}</code>\n` +
+            `Статус: <b>${escHtml(l.status)}</b>\n` +
+            `Ціна: ₴${escHtml(l.currentPrice)} (крок ₴${escHtml(l.bidStep)})`,
           kb([[{ text: "🗑 Видалити", callback_data: `DELLOT:${l.id}` }]])
         );
       }
@@ -333,7 +345,7 @@ export async function telegramWebhook(req, res) {
 
       await sendMessage(
         chatId,
-        `⚠️ Підтвердь видалення лоту:\n<code>${lotId}</code>`,
+        `⚠️ Підтвердь видалення лоту:\n<code>${escHtml(lotId)}</code>`,
         kb([
           [
             { text: "✅ Так, видалити", callback_data: `DELLOT_CONFIRM:${lotId}` },
@@ -450,7 +462,9 @@ export async function telegramWebhook(req, res) {
       const lotUrl = WEBAPP_URL ? `${WEBAPP_URL}/lot/${lot.id}` : "";
       await sendMessage(
         chatId,
-        `✅ Лот створено!\n\n<b>${lot.title}</b>\nСтарт: ₴${lot.currentPrice}\nКрок: ₴${lot.bidStep}\n`,
+        `✅ Лот створено!\n\n<b>${escHtml(lot.title)}</b>\nСтарт: ₴${escHtml(
+          lot.currentPrice
+        )}\nКрок: ₴${escHtml(lot.bidStep)}\n`,
         lotUrl
           ? { reply_markup: { inline_keyboard: [[{ text: "Відкрити лот", url: lotUrl }]] } }
           : adminMenuKeyboard()
