@@ -6,7 +6,7 @@ globalThis.__prisma = prisma;
 /* ===============================
    HELPERS
 ================================ */
-function computeStatus(lot) {
+function computeStatus mergesStatus(lot) {
   if (!lot) return "ENDED";
   if (lot.status === "ENDED") return "ENDED";
 
@@ -21,22 +21,32 @@ function computeStatus(lot) {
 
 /* ===============================
    CREATE LOT (ADMIN / BOT)
+   ✅ supports startsAt (scheduled lots)
 ================================ */
-export async function createLot({ title, imageUrl, startPrice, bidStep, endsAt }) {
+export async function createLot({ title, imageUrl, startPrice, bidStep, startsAt, endsAt }) {
   const sp = Number(startPrice || 0);
   const bs = Number(bidStep || 10);
+
+  const start = startsAt ? new Date(startsAt) : new Date();
   const end = new Date(endsAt);
+
+  const base = {
+    title: String(title || "New lot"),
+    imageUrl: String(imageUrl || ""),
+    startPrice: Math.max(0, Math.trunc(sp)),
+    bidStep: Math.max(1, Math.trunc(bs)),
+    currentPrice: Math.max(0, Math.trunc(sp)),
+    startsAt: start,
+    endsAt: end,
+  };
+
+  // ✅ статус вычисляем по времени
+  const status = computeStatus({ ...base, status: "SCHEDULED" });
 
   const lot = await prisma.lot.create({
     data: {
-      title: String(title || "New lot"),
-      imageUrl: String(imageUrl || ""),
-      startPrice: Math.max(0, Math.trunc(sp)),
-      bidStep: Math.max(1, Math.trunc(bs)),
-      currentPrice: Math.max(0, Math.trunc(sp)),
-      status: "LIVE",
-      startsAt: new Date(),
-      endsAt: end,
+      ...base,
+      status,
     },
   });
 
