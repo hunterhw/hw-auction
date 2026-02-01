@@ -41,12 +41,14 @@ app.use("/uploads", express.static(uploadsDir));
 // --- ENV ---
 const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN; // required
+const WEBAPP_URL = process.env.WEBAPP_URL || ""; // ✅ добавь
 const CHANNEL_ID = process.env.CHANNEL_ID; // "@hw_hunter_ua" or -100...
 const CHANNEL_URL =
   process.env.CHANNEL_URL ||
   (typeof CHANNEL_ID === "string" && CHANNEL_ID.startsWith("@")
     ? `https://t.me/${CHANNEL_ID.slice(1)}`
     : null);
+
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN is missing. Set it in Render env");
