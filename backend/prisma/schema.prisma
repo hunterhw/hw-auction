@@ -20,10 +20,13 @@ model Lot {
   startsAt     DateTime
   endsAt       DateTime
   createdAt    DateTime  @default(now())
+  endedNotifiedAt      DateTime?
+  endingSoonNotifiedAt DateTime?
   bids         Bid[]
+  autoBids  AutoBid[]
+  comments  Comment[]
   endedNotifiedAt DateTime? // чтобы “победа/проигрыш” не слать 100 раз
-
-  autoBids        AutoBid[]
+  
 }
 
 model Bid {
