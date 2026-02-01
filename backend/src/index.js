@@ -1,4 +1,3 @@
-import { telegramWebhook } from "./telegram_bot.js";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -8,13 +7,15 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 
+import { telegramWebhook } from "./telegram_bot.js";
 import adminRouter from "./admin.js";
+
 import { listLots, getLot, placeBid, createLot } from "./auction.js";
 import { verifyTelegramInitData, parseUserFromInitData } from "./telegram.js";
 
 const app = express();
 
-// --- CORS (чуть аккуратнее для Telegram/iOS) ---
+// --- CORS (аккуратно для Telegram/iOS) ---
 app.use(
   cors({
     origin: "*",
@@ -26,20 +27,22 @@ app.options("*", cors());
 
 // json
 app.use(express.json({ limit: "5mb" }));
-app.post("/telegram/webhook", telegramWebhook);
 
 // paths
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// створюємо папку uploads якщо її нема
+// uploads папка: backend/uploads (або ../uploads від src)
 const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-// роздача завантажених файлів
+// отдача загруженных файлов
 app.use("/uploads", express.static(uploadsDir));
 
-// адмін роутер (если у тебя там уже есть /admin/upload и т.д.)
+// ✅ Telegram webhook (ТОЛЬКО ОДИН)
+app.post("/telegram/webhook", telegramWebhook);
+
+// admin роутер (если используешь)
 app.use("/admin", adminRouter);
 
 const PORT = process.env.PORT || 8080;
@@ -57,7 +60,7 @@ if (!BOT_TOKEN) {
 }
 
 async function checkSubscription(userId) {
-  // если канал не задан — считаем, что подписка не нужна
+  // если канал не задан — подписка не нужна
   if (!CHANNEL_ID) return { ok: true };
 
   const url =
@@ -119,8 +122,6 @@ app.get("/lots", async (req, res) => {
         userId: user.id,
         status: sub.status,
         reason: sub.reason,
-        tg: sub.tg,
-        error: sub.error,
       });
 
       return res.status(403).json({
@@ -154,12 +155,6 @@ app.get("/lots/:id", async (req, res) => {
     // Telegram: если нет подписки — можно смотреть, но писать, что нет подписки
     const sub = await checkSubscription(user.id);
     if (!sub.ok) {
-      console.warn("NOT_SUBSCRIBED (VIEW_ONLY):", {
-        userId: user.id,
-        status: sub.status,
-        reason: sub.reason,
-      });
-
       return res.status(403).json({
         lot,
         bids,
@@ -218,8 +213,7 @@ app.post("/lots/:id/bid", async (req, res) => {
   }
 });
 
-// ===== ADMIN: создать лот =====
-// ВАЖНО: добавь ADMIN_KEY в Render env
+// ===== ADMIN: создать лот через API (можно оставить) =====
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 
 app.post("/admin/lots", async (req, res) => {
@@ -238,8 +232,7 @@ app.post("/admin/lots", async (req, res) => {
       return res.status(400).json({ error: "BAD_PAYLOAD" });
     }
 
-    const now = new Date();
-    const endsAt = new Date(now.getTime() + dm * 60 * 1000);
+    const endsAt = new Date(Date.now() + dm * 60 * 1000);
 
     const lot = await createLot({
       title: String(title),
@@ -257,36 +250,6 @@ app.post("/admin/lots", async (req, res) => {
 });
 
 // --- WS ---
-// ✅ Telegram webhook handler
-const ADMIN_IDS = String(process.env.ADMIN_IDS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
-
-import { handleTelegramUpdate } from "./tg-bot-admin.js";
-
-app.post("/telegram/webhook", async (req, res) => {
-  try {
-    // Telegram надсилає секрет у заголовку, якщо ти задав secret_token у setWebhook
-    const secret = req.headers["x-telegram-bot-api-secret-token"];
-    if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
-      return res.status(401).json({ ok: false });
-    }
-
-    await handleTelegramUpdate(req.body, {
-      botToken: BOT_TOKEN,
-      adminIds: ADMIN_IDS,
-    });
-
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error("WEBHOOK ERROR:", e);
-    return res.json({ ok: true }); // Telegramу важливо отримати 200
-  }
-});
-
 const server = app.listen(PORT, () => console.log("✅ Backend on", PORT));
 const wss = new WebSocketServer({ server });
 
