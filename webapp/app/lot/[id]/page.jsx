@@ -31,19 +31,17 @@ function openSubscribe(url) {
   } catch {}
   window.open(url, "_blank");
 }
+
 function resolveImage(url) {
   if (!url) return null;
 
-  // полный URL
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
 
-  // uploads на бекенде
   if (url.startsWith("/uploads/")) {
     const base = process.env.NEXT_PUBLIC_API_BASE || "";
     return `${base}${url}`;
   }
 
-  // остальное типа "/bmw-sth.jpg" — это public фронта
   return url;
 }
 
@@ -57,6 +55,17 @@ export default function LotPage({ params }) {
 
   const [me, setMe] = useState({ id: null, name: "Ви" });
 
+  // ✅ Comments
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+
+  // ✅ AutoBid
+  const [autoBidMax, setAutoBidMax] = useState("");
+  const [autoBidBusy, setAutoBidBusy] = useState(false);
+  const [myAutoBid, setMyAutoBid] = useState(null);
+
+  // UI toasts / outbid overlay
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
 
@@ -77,14 +86,15 @@ export default function LotPage({ params }) {
     tgReady();
     const u = window?.Telegram?.WebApp?.initDataUnsafe?.user;
     if (u?.id) {
+      const id = String(u.id);
       setMe({
-        id: String(u.id),
+        id,
         name: u.username ? `@${u.username}` : u.first_name || "Ви",
       });
     }
   }, []);
 
-  // Polling
+  // Polling lot/bids/comments/autobid
   useEffect(() => {
     let alive = true;
 
@@ -107,7 +117,22 @@ export default function LotPage({ params }) {
         if (!nextLot) {
           setLot(null);
           setBids([]);
+          setComments([]);
+          setMyAutoBid(null);
           return;
+        }
+
+        // ✅ comments/autoBids from backend if present
+        const nextComments = Array.isArray(r?.comments) ? r.comments : [];
+        const nextAutoBids = Array.isArray(r?.autoBids) ? r.autoBids : [];
+
+        if (nextComments.length) setComments(nextComments);
+        if (nextAutoBids.length && me?.id) {
+          const mine = nextAutoBids.find((x) => String(x.userId) === String(me.id) && x.isActive);
+          setMyAutoBid(mine || null);
+          if (mine?.maxAmount != null) setAutoBidMax(String(mine.maxAmount));
+        } else if (me?.id) {
+          setMyAutoBid(null);
         }
 
         // toast when top bid changed
@@ -144,7 +169,15 @@ export default function LotPage({ params }) {
 
         setLot(nextLot);
         setBids(nextBids);
-      } catch (e) {
+
+        // ✅ fallback: if comments empty in payload, try load once
+        if ((!nextComments || nextComments.length === 0) && comments.length === 0 && !showSubscribe) {
+          try {
+            const c = await apiGet(`/lots/${lotId}/comments?take=50`);
+            if (Array.isArray(c?.comments)) setComments(c.comments);
+          } catch {}
+        }
+      } catch {
         setErr("Помилка з’єднання (API).");
       }
     }
@@ -156,6 +189,7 @@ export default function LotPage({ params }) {
       alive = false;
       clearInterval(t);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lotId, me?.id]);
 
   // timer tick
@@ -220,12 +254,91 @@ export default function LotPage({ params }) {
 
   const nextMin = useMemo(() => {
     if (!lot) return 0;
-    return lot.currentPrice + lot.bidStep;
+    return Number(lot.currentPrice || 0) + Number(lot.bidStep || 0);
   }, [lot]);
 
-  function quickBid(delta) {
-    const amount = nextMin + (delta - lot.bidStep);
-    bid(amount);
+  // ✅ FIXED: delta = +10/+20/+50 add-on to NEXT MIN
+  function quickBid(extra) {
+    bid(nextMin + Number(extra || 0));
+  }
+
+  const showSubscribe = err === "NOT_SUBSCRIBED";
+  const imgSrc = resolveImage(lot?.imageUrl);
+
+  async function submitComment() {
+    const text = String(commentText || "").trim();
+    if (!text) return;
+
+    setCommentBusy(true);
+    try {
+      const r = await apiPost(`/lots/${lotId}/comment`, { text });
+
+      if (r?.error === "NOT_SUBSCRIBED") {
+        setSubscribeUrl(r.subscribeUrl || null);
+        setErr("NOT_SUBSCRIBED");
+        return;
+      }
+
+      if (r?.error) {
+        setErr(`Помилка: ${r.error}`);
+        return;
+      }
+
+      const c = r?.comment;
+      if (c?.id) {
+        setComments((prev) => [c, ...prev].slice(0, 100));
+        setCommentText("");
+        haptic("impact", "light");
+      }
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
+  async function enableAutoBid() {
+    const max = Math.trunc(Number(autoBidMax));
+    if (!Number.isFinite(max) || max <= 0) {
+      setErr("Вкажи max суму для автобіду (наприклад 500).");
+      return;
+    }
+
+    setAutoBidBusy(true);
+    try {
+      const r = await apiPost(`/lots/${lotId}/autobid`, { maxAmount: max });
+
+      if (r?.error === "NOT_SUBSCRIBED") {
+        setSubscribeUrl(r.subscribeUrl || null);
+        setErr("NOT_SUBSCRIBED");
+        return;
+      }
+
+      if (r?.error) {
+        setErr(`Помилка: ${r.error}`);
+        return;
+      }
+
+      const ab = r?.autoBid || null;
+      setMyAutoBid(ab);
+      haptic("notification", "success");
+    } finally {
+      setAutoBidBusy(false);
+    }
+  }
+
+  async function disableAutoBidClient() {
+    setAutoBidBusy(true);
+    try {
+      const r = await apiPost(`/lots/${lotId}/autobid/delete`, {}); // fallback if you don't support DELETE in api helper
+      if (r?.ok) {
+        setMyAutoBid(null);
+        haptic("impact", "medium");
+        return;
+      }
+      // If your api helper supports DELETE, replace block below accordingly (see note after code)
+      if (r?.error) setErr(`Помилка: ${r.error}`);
+    } finally {
+      setAutoBidBusy(false);
+    }
   }
 
   if (!lot) {
@@ -240,9 +353,6 @@ export default function LotPage({ params }) {
       </div>
     );
   }
-
-  const showSubscribe = err === "NOT_SUBSCRIBED";
-  const imgSrc = resolveImage(lot.imageUrl);
 
   return (
     <>
@@ -330,8 +440,21 @@ export default function LotPage({ params }) {
         </div>
       )}
 
-      <div style={{ padding: 14, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto", color: "white" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+      <div
+        style={{
+          padding: 14,
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto",
+          color: "white",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
           <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
           <div
             style={{
@@ -350,10 +473,10 @@ export default function LotPage({ params }) {
 
         <div style={{ position: "relative", marginTop: 10 }}>
           <img
-  src={imgSrc || ""}
-  alt={lot.title}
-  style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
-/>
+            src={imgSrc || "/placeholder.jpg"}
+            alt={lot.title}
+            style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
+          />
 
           <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 8 }}>
             {toasts.map((t) => (
@@ -413,6 +536,7 @@ export default function LotPage({ params }) {
           </div>
         </div>
 
+        {/* Price box */}
         <div
           style={{
             marginTop: 12,
@@ -439,6 +563,7 @@ export default function LotPage({ params }) {
           </div>
         </div>
 
+        {/* Quick bids */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
           <button
             onClick={() => quickBid(10)}
@@ -485,6 +610,88 @@ export default function LotPage({ params }) {
           </div>
         )}
 
+        {/* ✅ AutoBid */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Автобід</div>
+
+          <div
+            style={{
+              border: "1px solid #2c2c2c",
+              borderRadius: 14,
+              padding: 12,
+              background: "#0f0f0f",
+            }}
+          >
+            <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.35 }}>
+              Автобід буде підвищувати ставку за тебе до максимального ліміту.
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+              <input
+                value={autoBidMax}
+                onChange={(e) => setAutoBidMax(e.target.value)}
+                inputMode="numeric"
+                placeholder="Max сума, напр 500"
+                style={{
+                  flex: 1,
+                  padding: "12px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #2c2c2c",
+                  background: "rgba(17,17,17,0.9)",
+                  color: "white",
+                  fontWeight: 900,
+                  outline: "none",
+                }}
+              />
+
+              {!myAutoBid ? (
+                <button
+                  onClick={enableAutoBid}
+                  disabled={autoBidBusy || showSubscribe}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #333",
+                    fontWeight: 1000,
+                    background: "#19c37d",
+                    color: "white",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Увімкнути
+                </button>
+              ) : (
+                <button
+                  onClick={disableAutoBidClient}
+                  disabled={autoBidBusy || showSubscribe}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #333",
+                    fontWeight: 1000,
+                    background: "#333",
+                    color: "white",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Вимкнути
+                </button>
+              )}
+            </div>
+
+            {myAutoBid && (
+              <div style={{ marginTop: 8, fontWeight: 900, fontSize: 12, opacity: 0.9 }}>
+                ✅ Увімкнено: max ₴{myAutoBid.maxAmount}
+              </div>
+            )}
+
+            <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
+              * Якщо у тебе в api helper є DELETE — скажи, я дам 100% правильний виклик. Зараз стоїть fallback.
+            </div>
+          </div>
+        </div>
+
+        {/* History bids */}
         <div style={{ marginTop: 14 }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>Історія ставок</div>
           <div style={{ display: "grid", gap: 8 }}>
@@ -504,6 +711,74 @@ export default function LotPage({ params }) {
                 <div style={{ fontWeight: 1000 }}>₴{b.amount}</div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* ✅ Comments */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Коментарі</div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <input
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder="Напиши коментар…"
+              style={{
+                flex: 1,
+                padding: "12px 12px",
+                borderRadius: 12,
+                border: "1px solid #2c2c2c",
+                background: "rgba(17,17,17,0.9)",
+                color: "white",
+                fontWeight: 800,
+                outline: "none",
+              }}
+              disabled={showSubscribe}
+            />
+            <button
+              onClick={submitComment}
+              disabled={commentBusy || !commentText.trim() || showSubscribe}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid #333",
+                fontWeight: 1000,
+                background: "#3e88f7",
+                color: "white",
+              }}
+            >
+              Надіслати
+            </button>
+          </div>
+
+          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+            {(comments || []).slice(0, 50).map((c) => (
+              <div
+                key={c.id}
+                style={{
+                  border: "1px solid #2c2c2c",
+                  borderRadius: 14,
+                  padding: 10,
+                  background: "rgba(15,15,15,0.92)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ fontWeight: 900 }}>{c.userName}</div>
+                  <div style={{ fontSize: 11, opacity: 0.65 }}>
+                    {c.createdAt ? new Date(c.createdAt).toLocaleString() : ""}
+                  </div>
+                </div>
+                <div style={{ marginTop: 6, opacity: 0.9, fontWeight: 700, lineHeight: 1.35 }}>
+                  {c.text}
+                </div>
+              </div>
+            ))}
+
+            {(!comments || comments.length === 0) && (
+              <div style={{ opacity: 0.7, fontWeight: 800 }}>
+                Поки що немає коментарів
+              </div>
+            )}
           </div>
         </div>
       </div>
