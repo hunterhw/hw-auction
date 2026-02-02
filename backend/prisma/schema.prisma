@@ -1,32 +1,24 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
 model Lot {
-  id           String    @id @default(cuid())
-  title        String
-  imageUrl     String
-  description  String?
-  startPrice   Int
-  bidStep      Int       @default(10)
-  currentPrice Int
-  leaderUserId String?
-  status       LotStatus @default(SCHEDULED)
-  startsAt     DateTime
-  endsAt       DateTime
-  createdAt    DateTime  @default(now())
+  id              String    @id @default(cuid())
+  title           String
+  imageUrl        String
+  description     String?
+  startPrice      Int
+  bidStep         Int       @default(10)
+  currentPrice    Int
+  leaderUserId    String?
+  status          LotStatus @default(SCHEDULED)
+  startsAt        DateTime
+  endsAt          DateTime
+  createdAt       DateTime  @default(now())
+
+  
   endedNotifiedAt      DateTime?
   endingSoonNotifiedAt DateTime?
-  bids         Bid[]
-  autoBids  AutoBid[]
-  comments  Comment[]
-  endedNotifiedAt DateTime? // чтобы “победа/проигрыш” не слать 100 раз
-  
+
+  bids      Bid[]
+  autoBids  AutoBid[]     
+  comments  Comment[]     
 }
 
 model Bid {
@@ -40,6 +32,7 @@ model Bid {
   lot Lot @relation(fields: [lotId], references: [id], onDelete: Cascade)
 
   @@index([lotId, createdAt])
+  @@index([userId, createdAt])
 }
 
 enum LotStatus {
@@ -47,6 +40,7 @@ enum LotStatus {
   LIVE
   ENDED
 }
+
 model AutoBid {
   id         String   @id @default(cuid())
   lotId      String
@@ -61,4 +55,17 @@ model AutoBid {
 
   @@unique([lotId, userId])
   @@index([lotId, maxAmount])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  lotId     String
+  userId    String
+  userName  String
+  text      String
+  createdAt DateTime @default(now())
+
+  lot Lot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  @@index([lotId, createdAt])
 }
