@@ -1,3 +1,18 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LotStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
 model Lot {
   id              String    @id @default(cuid())
   title           String
@@ -12,13 +27,13 @@ model Lot {
   endsAt          DateTime
   createdAt       DateTime  @default(now())
 
-  
+  // ✅ уведомления, чтобы не слать 100 раз
   endedNotifiedAt      DateTime?
   endingSoonNotifiedAt DateTime?
 
   bids      Bid[]
-  autoBids  AutoBid[]     
-  comments  Comment[]     
+  autoBids  AutoBid[]   // ✅ обратная связь для AutoBid
+  comments  Comment[]   // ✅ комментарии
 }
 
 model Bid {
@@ -33,12 +48,6 @@ model Bid {
 
   @@index([lotId, createdAt])
   @@index([userId, createdAt])
-}
-
-enum LotStatus {
-  SCHEDULED
-  LIVE
-  ENDED
 }
 
 model AutoBid {
