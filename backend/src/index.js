@@ -22,11 +22,13 @@ import { verifyTelegramInitData, parseUserFromInitData } from "./telegram.js";
 
 const app = express();
 
-// --- CORS ---
+/* =========================
+   CORS ✅ (добавили DELETE/PUT)
+========================= */
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS"],
     allowedHeaders: ["Content-Type", "x-telegram-initdata", "x-telegram-bot-api-secret-token"],
   })
 );
@@ -50,7 +52,7 @@ app.use("/uploads", express.static(uploadsDir));
 // --- ENV ---
 const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN; // required
-const WEBAPP_URL = process.env.WEBAPP_URL || ""; // ✅ mini-app base url (например https://xxx.vercel.app)
+const WEBAPP_URL = process.env.WEBAPP_URL || ""; // mini-app base url (например https://xxx.vercel.app)
 const CHANNEL_ID = process.env.CHANNEL_ID; // "@hw_hunter_ua" or -100...
 const CHANNEL_URL =
   process.env.CHANNEL_URL ||
@@ -193,7 +195,7 @@ app.get("/lots", async (req, res) => {
   }
 });
 
-// 0) lot by id
+// lot by id
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -225,7 +227,7 @@ app.get("/lots/:id", async (req, res) => {
   }
 });
 
-// 3) place bid + outbid notify
+// place bid + outbid notify
 app.post("/lots/:id/bid", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -258,7 +260,6 @@ app.post("/lots/:id/bid", async (req, res) => {
     try {
       const prevId = result?.outbid?.userId ? String(result.outbid.userId) : null;
 
-      // если был лидер и это не тот же человек, что поставил сейчас
       if (prevId && prevId !== String(user.id)) {
         const lotTitle = escHtml(result?.lot?.title || "Лот");
         const newPrice = escHtml(result?.lot?.currentPrice);
@@ -270,7 +271,6 @@ app.post("/lots/:id/bid", async (req, res) => {
           `Нова ціна: <b>₴${newPrice}</b>\n` +
           `\nНатисни кнопку нижче 👇`;
 
-        // ✅ web_app button -> открывает мини-апп
         const extra = lotUrl
           ? {
               reply_markup: {
@@ -280,11 +280,7 @@ app.post("/lots/:id/bid", async (req, res) => {
           : {};
 
         const sent = await tgSendMessage(prevId, msg, extra);
-
-        // если юзер не стартовал бота — Telegram вернет ошибку, просто логируем
-        if (!sent?.ok) {
-          console.log("OUTBID_NOTIFY_FAIL:", sent);
-        }
+        if (!sent?.ok) console.log("OUTBID_NOTIFY_FAIL:", sent);
       }
     } catch (e) {
       console.log("OUTBID_NOTIFY_ERROR:", e);
@@ -303,9 +299,7 @@ app.post("/lots/:id/bid", async (req, res) => {
   }
 });
 
-/* =========================
-   ✅ 1) MY BIDS
-========================= */
+// ✅ MY BIDS
 app.get("/me/bids", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -327,9 +321,7 @@ app.get("/me/bids", async (req, res) => {
   }
 });
 
-/* =========================
-   ✅ 2) ADD COMMENT
-========================= */
+// ✅ ADD COMMENT
 app.post("/lots/:id/comment", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -354,18 +346,14 @@ app.post("/lots/:id/comment", async (req, res) => {
       text,
     });
 
-    // можно пушнуть по WS
     broadcastToLot(req.params.id, { type: "COMMENT_ADDED", lotId: req.params.id, comment: c });
-
     return res.json({ ok: true, comment: c });
   } catch (e) {
     return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
-/* =========================
-   ✅ 4) LIST COMMENTS
-========================= */
+// ✅ LIST COMMENTS
 app.get("/lots/:id/comments", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -388,9 +376,7 @@ app.get("/lots/:id/comments", async (req, res) => {
   }
 });
 
-/* =========================
-   ✅ 5) AUTO BID ON/OFF
-========================= */
+// ✅ AUTO BID ON
 app.post("/lots/:id/autobid", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -419,13 +405,13 @@ app.post("/lots/:id/autobid", async (req, res) => {
     });
 
     broadcastToLot(req.params.id, { type: "AUTOBID_SET", lotId: req.params.id, autoBid: ab });
-
     return res.json({ ok: true, autoBid: ab });
   } catch (e) {
     return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
+// ✅ AUTO BID OFF
 app.delete("/lots/:id/autobid", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -441,7 +427,6 @@ app.delete("/lots/:id/autobid", async (req, res) => {
     }
 
     const ab = await disableAutoBid({ lotId: req.params.id, userId: user.id });
-
     broadcastToLot(req.params.id, { type: "AUTOBID_DISABLED", lotId: req.params.id, autoBid: ab });
 
     return res.json({ ok: true });
