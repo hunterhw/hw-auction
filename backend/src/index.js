@@ -8,7 +8,16 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 
 import { telegramWebhook } from "./telegram_bot.js";
-import { listLots, getLot, placeBid } from "./auction.js";
+import {
+  listLots,
+  getLot,
+  placeBid,
+  listUserBids,
+  addComment,
+  listComments,
+  setAutoBid,
+  disableAutoBid,
+} from "./auction.js";
 import { verifyTelegramInitData, parseUserFromInitData } from "./telegram.js";
 
 const app = express();
@@ -41,7 +50,7 @@ app.use("/uploads", express.static(uploadsDir));
 // --- ENV ---
 const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN; // required
-const WEBAPP_URL = process.env.WEBAPP_URL || ""; // ✅ добавь
+const WEBAPP_URL = process.env.WEBAPP_URL || ""; // ✅ mini-app base url (например https://xxx.vercel.app)
 const CHANNEL_ID = process.env.CHANNEL_ID; // "@hw_hunter_ua" or -100...
 const CHANNEL_URL =
   process.env.CHANNEL_URL ||
@@ -49,11 +58,14 @@ const CHANNEL_URL =
     ? `https://t.me/${CHANNEL_ID.slice(1)}`
     : null);
 
-
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN is missing. Set it in Render env");
   process.exit(1);
 }
+
+/* =========================
+   HTML ESCAPE
+========================= */
 function escHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -61,30 +73,35 @@ function escHtml(s) {
     .replace(/>/g, "&gt;");
 }
 
+/* =========================
+   SEND TG MESSAGE (private)
+========================= */
 async function tgSendMessage(userId, text, extra = {}) {
-  if (!BOT_TOKEN) return { ok: false, error: "NO_BOT_TOKEN" };
-
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         chat_id: userId, // в приватке userId == chatId
-        text,
+        text: String(text),
         parse_mode: "HTML",
         disable_web_page_preview: true,
         ...extra,
       }),
     });
-    const data = await res.json();
-    return data;
+
+    const data = await res.json().catch(() => null);
+    return data || { ok: false, error: "BAD_JSON_FROM_TG" };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
   }
 }
 
-// --- helpers ---
+/* =========================
+   HELPERS
+========================= */
 async function checkSubscription(userId) {
   if (!CHANNEL_ID) return { ok: true };
 
@@ -111,22 +128,32 @@ function authFromInitData(req) {
   if (!initData || typeof initData !== "string" || initData.length === 0) return null;
 
   if (!verifyTelegramInitData(initData, BOT_TOKEN)) throw new Error("BAD_INITDATA");
+
   const user = parseUserFromInitData(initData);
   if (!user?.id) throw new Error("NO_USER");
   return user;
 }
 
+// ✅ отдаём всё, что есть в getLot: bids/comments/autoBids
 function normalizeLotPayload(rawLot) {
-  if (!rawLot) return { lot: null, bids: [] };
+  if (!rawLot) return { lot: null, bids: [], comments: [], autoBids: [] };
+
   const bids = Array.isArray(rawLot.bids) ? rawLot.bids : [];
-  const { bids: _b, ...cleanLot } = rawLot;
-  return { lot: cleanLot, bids };
+  const comments = Array.isArray(rawLot.comments) ? rawLot.comments : [];
+  const autoBids = Array.isArray(rawLot.autoBids) ? rawLot.autoBids : [];
+
+  const { bids: _b, comments: _c, autoBids: _a, ...cleanLot } = rawLot;
+  return { lot: cleanLot, bids, comments, autoBids };
 }
 
-// --- health ---
+/* =========================
+   HEALTH
+========================= */
 app.get("/health", (_, res) => res.json({ ok: true }));
 
-// webhook
+/* =========================
+   TELEGRAM WEBHOOK
+========================= */
 app.post("/telegram/webhook", async (req, res) => {
   try {
     console.log("TG UPDATE:", JSON.stringify(req.body));
@@ -137,7 +164,11 @@ app.post("/telegram/webhook", async (req, res) => {
   }
 });
 
-// --- API routes ---
+/* =========================
+   API ROUTES
+========================= */
+
+// 0) lots list
 app.get("/lots", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -162,22 +193,25 @@ app.get("/lots", async (req, res) => {
   }
 });
 
+// 0) lot by id
 app.get("/lots/:id", async (req, res) => {
   try {
     const user = authFromInitData(req);
 
     const rawLot = await getLot(req.params.id);
-    const { lot, bids } = normalizeLotPayload(rawLot);
+    const { lot, bids, comments, autoBids } = normalizeLotPayload(rawLot);
 
-    if (!lot) return res.json({ lot: null, bids: [], viewOnly: true, reason: "NOT_FOUND" });
+    if (!lot) return res.json({ lot: null, bids: [], comments: [], autoBids: [], viewOnly: true });
 
-    if (!user) return res.json({ lot, bids, viewOnly: true });
+    if (!user) return res.json({ lot, bids, comments, autoBids, viewOnly: true });
 
     const sub = await checkSubscription(user.id);
     if (!sub.ok) {
       return res.status(403).json({
         lot,
         bids,
+        comments,
+        autoBids,
         viewOnly: true,
         error: "NOT_SUBSCRIBED",
         subscribeUrl: CHANNEL_URL,
@@ -185,12 +219,13 @@ app.get("/lots/:id", async (req, res) => {
       });
     }
 
-    return res.json({ lot, bids, viewOnly: false });
+    return res.json({ lot, bids, comments, autoBids, viewOnly: false });
   } catch (e) {
     return res.status(400).json({ error: String(e?.message || e) });
   }
 });
 
+// 3) place bid + outbid notify
 app.post("/lots/:id/bid", async (req, res) => {
   try {
     const user = authFromInitData(req);
@@ -218,44 +253,42 @@ app.post("/lots/:id/bid", async (req, res) => {
       userName: user.username ? `@${user.username}` : `${user.first_name || "Користувач"}`,
       amount: numAmount,
     });
-// ✅ уведомление "перебили ставку"
-try {
-  const prevId = result?.outbid?.userId ? String(result.outbid.userId) : null;
 
-  // если был лидер и это не тот же человек, что поставил сейчас
-  if (prevId && prevId !== String(user.id)) {
-    const lotTitle = escHtml(result?.lot?.title || "Лот");
-    const newPrice = escHtml(result?.lot?.currentPrice);
-    const lotUrl = WEBAPP_URL ? `${WEBAPP_URL}/lot/${req.params.id}` : "";
+    // ✅ уведомление "перебили ставку"
+    try {
+      const prevId = result?.outbid?.userId ? String(result.outbid.userId) : null;
 
-    const msg =
-  `⚡️ Твою ставку перебили!\n` +
-  `<b>${lotTitle}</b>\n` +
-  `Нова ціна: <b>₴${newPrice}</b>\n` +
-  `\nНатисни кнопку нижче 👇`;
+      // если был лидер и это не тот же человек, что поставил сейчас
+      if (prevId && prevId !== String(user.id)) {
+        const lotTitle = escHtml(result?.lot?.title || "Лот");
+        const newPrice = escHtml(result?.lot?.currentPrice);
+        const lotUrl = WEBAPP_URL ? `${WEBAPP_URL}/lot/${req.params.id}` : "";
 
+        const msg =
+          `⚡️ Твою ставку перебили!\n` +
+          `<b>${lotTitle}</b>\n` +
+          `Нова ціна: <b>₴${newPrice}</b>\n` +
+          `\nНатисни кнопку нижче 👇`;
 
-    // можно кнопкой
-    const extra =
-  lotUrl
-    ? {
-        reply_markup: {
-          inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl } }]],
-        },
+        // ✅ web_app button -> открывает мини-апп
+        const extra = lotUrl
+          ? {
+              reply_markup: {
+                inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl } }]],
+              },
+            }
+          : {};
+
+        const sent = await tgSendMessage(prevId, msg, extra);
+
+        // если юзер не стартовал бота — Telegram вернет ошибку, просто логируем
+        if (!sent?.ok) {
+          console.log("OUTBID_NOTIFY_FAIL:", sent);
+        }
       }
-    : {};
-
-
-    const sent = await tgSendMessage(prevId, msg, extra);
-
-    // если юзер не стартовал бота — Telegram вернет ошибку, просто игнорим
-    if (!sent?.ok) {
-      console.log("OUTBID_NOTIFY_FAIL:", sent);
+    } catch (e) {
+      console.log("OUTBID_NOTIFY_ERROR:", e);
     }
-  }
-} catch (e) {
-  console.log("OUTBID_NOTIFY_ERROR:", e);
-}
 
     broadcastToLot(req.params.id, {
       type: "BID_PLACED",
@@ -270,15 +303,165 @@ try {
   }
 });
 
-// --- WS ---
+/* =========================
+   ✅ 1) MY BIDS
+========================= */
+app.get("/me/bids", async (req, res) => {
+  try {
+    const user = authFromInitData(req);
+    if (!user) return res.status(401).json({ error: "AUTH_REQUIRED" });
+
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      return res.status(403).json({
+        error: "NOT_SUBSCRIBED",
+        subscribeUrl: CHANNEL_URL,
+        channelId: CHANNEL_ID,
+      });
+    }
+
+    const bids = await listUserBids(user.id);
+    return res.json({ bids });
+  } catch (e) {
+    return res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+/* =========================
+   ✅ 2) ADD COMMENT
+========================= */
+app.post("/lots/:id/comment", async (req, res) => {
+  try {
+    const user = authFromInitData(req);
+    if (!user) return res.status(401).json({ error: "AUTH_REQUIRED" });
+
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      return res.status(403).json({
+        error: "NOT_SUBSCRIBED",
+        subscribeUrl: CHANNEL_URL,
+        channelId: CHANNEL_ID,
+      });
+    }
+
+    const text = String(req.body?.text || "").trim();
+    if (!text) return res.status(400).json({ error: "EMPTY_COMMENT" });
+
+    const c = await addComment({
+      lotId: req.params.id,
+      userId: user.id,
+      userName: user.username ? `@${user.username}` : `${user.first_name || "Користувач"}`,
+      text,
+    });
+
+    // можно пушнуть по WS
+    broadcastToLot(req.params.id, { type: "COMMENT_ADDED", lotId: req.params.id, comment: c });
+
+    return res.json({ ok: true, comment: c });
+  } catch (e) {
+    return res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+/* =========================
+   ✅ 4) LIST COMMENTS
+========================= */
+app.get("/lots/:id/comments", async (req, res) => {
+  try {
+    const user = authFromInitData(req);
+    if (!user) return res.status(401).json({ error: "AUTH_REQUIRED" });
+
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      return res.status(403).json({
+        error: "NOT_SUBSCRIBED",
+        subscribeUrl: CHANNEL_URL,
+        channelId: CHANNEL_ID,
+      });
+    }
+
+    const take = Number(req.query?.take || 50);
+    const comments = await listComments(req.params.id, take);
+    return res.json({ comments });
+  } catch (e) {
+    return res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+/* =========================
+   ✅ 5) AUTO BID ON/OFF
+========================= */
+app.post("/lots/:id/autobid", async (req, res) => {
+  try {
+    const user = authFromInitData(req);
+    if (!user) return res.status(401).json({ error: "AUTH_REQUIRED" });
+
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      return res.status(403).json({
+        error: "NOT_SUBSCRIBED",
+        subscribeUrl: CHANNEL_URL,
+        channelId: CHANNEL_ID,
+      });
+    }
+
+    const maxAmount = Number(req.body?.maxAmount);
+    if (!Number.isFinite(maxAmount) || maxAmount <= 0) {
+      return res.status(400).json({ error: "BAD_MAX_AMOUNT" });
+    }
+
+    const ab = await setAutoBid({
+      lotId: req.params.id,
+      userId: user.id,
+      userName: user.username ? `@${user.username}` : `${user.first_name || "Користувач"}`,
+      maxAmount,
+      isActive: true,
+    });
+
+    broadcastToLot(req.params.id, { type: "AUTOBID_SET", lotId: req.params.id, autoBid: ab });
+
+    return res.json({ ok: true, autoBid: ab });
+  } catch (e) {
+    return res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+app.delete("/lots/:id/autobid", async (req, res) => {
+  try {
+    const user = authFromInitData(req);
+    if (!user) return res.status(401).json({ error: "AUTH_REQUIRED" });
+
+    const sub = await checkSubscription(user.id);
+    if (!sub.ok) {
+      return res.status(403).json({
+        error: "NOT_SUBSCRIBED",
+        subscribeUrl: CHANNEL_URL,
+        channelId: CHANNEL_ID,
+      });
+    }
+
+    const ab = await disableAutoBid({ lotId: req.params.id, userId: user.id });
+
+    broadcastToLot(req.params.id, { type: "AUTOBID_DISABLED", lotId: req.params.id, autoBid: ab });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ error: String(e?.message || e) });
+  }
+});
+
+/* =========================
+   WS
+========================= */
 const server = app.listen(PORT, () => console.log("✅ Backend on", PORT));
 const wss = new WebSocketServer({ server });
 
-const lotRooms = new Map();
+const lotRooms = new Map(); // lotId -> Set(ws)
 
 function broadcastToLot(lotId, payload) {
-  const room = lotRooms.get(lotId);
+  const room = lotRooms.get(String(lotId));
   if (!room) return;
+
   const msg = JSON.stringify(payload);
   for (const ws of room) {
     if (ws.readyState === ws.OPEN) {
@@ -308,9 +491,9 @@ wss.on("connection", (ws) => {
         lotRooms.get(lotId).add(ws);
 
         const rawLot = await getLot(lotId);
-        const { lot, bids } = normalizeLotPayload(rawLot);
+        const { lot, bids, comments, autoBids } = normalizeLotPayload(rawLot);
 
-        ws.send(JSON.stringify({ type: "SNAPSHOT", lot, bids }));
+        ws.send(JSON.stringify({ type: "SNAPSHOT", lot, bids, comments, autoBids }));
       }
     } catch {}
   });
