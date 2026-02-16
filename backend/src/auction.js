@@ -323,3 +323,18 @@ export async function deleteLot(lotId) {
     where: { id: String(lotId) },
   });
 }
+
+/* ===============================
+   DISABLE AUTO BID ✅
+================================ */
+export async function disableAutoBid({ lotId, userId }) {
+  return prisma.autoBid.update({
+    where: {
+      lotId_userId: {
+        lotId: String(lotId),
+        userId: String(userId),
+      },
+    },
+    data: { isActive: false },
+  });
+}
