@@ -251,6 +251,40 @@ export async function placeBid({
 }
 
 /* ===============================
+   USER BID HISTORY
+================================ */
+export async function listUserBids(userId) {
+  const uid = String(userId);
+
+  const bids = await prisma.bid.findMany({
+    where: { userId: uid },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+    include: {
+      lot: true,
+    },
+  });
+
+  return bids.map((b) => ({
+    id: b.id,
+    lotId: b.lotId,
+    amount: b.amount,
+    createdAt: b.createdAt,
+
+    lot: b.lot
+      ? {
+          id: b.lot.id,
+          title: b.lot.title,
+          imageUrl: b.lot.imageUrl,
+          status: b.lot.status,
+          currentPrice: b.lot.currentPrice,
+          endsAt: b.lot.endsAt,
+        }
+      : null,
+  }));
+}
+
+/* ===============================
    COMMENTS
 ================================ */
 export async function addComment({
