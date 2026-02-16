@@ -8,7 +8,6 @@ globalThis.__prisma = prisma;
 ================================ */
 function computeStatus(lot) {
   if (!lot) return "ENDED";
-  if (lot.status === "ENDED") return "ENDED";
 
   const now = Date.now();
   const startsAt = new Date(lot.startsAt).getTime();
@@ -25,10 +24,50 @@ function toInt(v, def = 0) {
 }
 
 /* ===============================
-   CREATE LOT (ADMIN / BOT)
-   ✅ supports startsAt (scheduled lots)
+   STATUS SYNC WORKER ✅
+   - чтобы лоты не зависали
 ================================ */
-export async function createLot({ title, imageUrl, startPrice, bidStep, startsAt, endsAt }) {
+export async function syncLotStatuses() {
+  const now = new Date();
+
+  // LIVE → ENDED
+  await prisma.lot.updateMany({
+    where: {
+      status: "LIVE",
+      endsAt: { lte: now },
+    },
+    data: { status: "ENDED" },
+  });
+
+  // SCHEDULED → LIVE
+  await prisma.lot.updateMany({
+    where: {
+      status: "SCHEDULED",
+      startsAt: { lte: now },
+    },
+    data: { status: "LIVE" },
+  });
+}
+
+/* ===============================
+   AUTO START WORKER
+   запускается сам при импорте
+================================ */
+setInterval(() => {
+  syncLotStatuses().catch(() => {});
+}, 15000); // каждые 15 сек
+
+/* ===============================
+   CREATE LOT
+================================ */
+export async function createLot({
+  title,
+  imageUrl,
+  startPrice,
+  bidStep,
+  startsAt,
+  endsAt,
+}) {
   const sp = Math.max(0, toInt(startPrice, 0));
   const bs = Math.max(1, toInt(bidStep, 10));
 
@@ -45,14 +84,12 @@ export async function createLot({ title, imageUrl, startPrice, bidStep, startsAt
     endsAt: end,
   };
 
-  // ✅ статус вычисляем по времени
-  const status = computeStatus({ ...base, status: "SCHEDULED" });
+  const status = computeStatus({ ...base });
 
   return prisma.lot.create({
     data: {
       ...base,
       status,
-      // поля уведомлений пусть будут null по умолчанию
       endedNotifiedAt: null,
       endingSoonNotifiedAt: null,
     },
@@ -61,19 +98,19 @@ export async function createLot({ title, imageUrl, startPrice, bidStep, startsAt
 
 /* ===============================
    LIST LOTS
-   - returns lots
-   - auto-updates status based on time
+   ❗ НЕ удаляет завершённые
 ================================ */
 export async function listLots() {
   const lots = await prisma.lot.findMany({
-    where: { status: { in: ["SCHEDULED", "LIVE", "ENDED"] } },
     orderBy: { endsAt: "asc" },
   });
 
-  // авто-обновление статусов по времени
+  // авто-обновление статусов
   const updates = [];
+
   for (const lot of lots) {
     const nextStatus = computeStatus(lot);
+
     if (nextStatus !== lot.status) {
       updates.push(
         prisma.lot.update({
@@ -81,16 +118,18 @@ export async function listLots() {
           data: { status: nextStatus },
         })
       );
-      lot.status = nextStatus; // обновим в памяти, чтобы фронт видел актуально
+
+      lot.status = nextStatus;
     }
   }
+
   if (updates.length) await Promise.allSettled(updates);
 
   return lots;
 }
 
 /* ===============================
-   GET LOT (with bids + comments + autoBids)
+   GET LOT
 ================================ */
 export async function getLot(id) {
   const lot = await prisma.lot.findUnique({
@@ -105,11 +144,13 @@ export async function getLot(id) {
   if (!lot) return null;
 
   const nextStatus = computeStatus(lot);
+
   if (nextStatus !== lot.status) {
     await prisma.lot.update({
       where: { id: lot.id },
       data: { status: nextStatus },
     });
+
     lot.status = nextStatus;
   }
 
@@ -117,49 +158,55 @@ export async function getLot(id) {
 }
 
 /* ===============================
-   PLACE BID  (NO LOCK ✅)
-   - защита от гонки через updateMany с условием
-   - возвращает outbid (кто был лидером до ставки)
+   PLACE BID
 ================================ */
-export async function placeBid({ lotId, userId, userName, amount }) {
+export async function placeBid({
+  lotId,
+  userId,
+  userName,
+  amount,
+}) {
   const lotIdStr = String(lotId);
   const uid = String(userId);
   const uname = String(userName || "Користувач");
   const amt = toInt(amount, 0);
 
-  if (!Number.isFinite(Number(amount)) || amt <= 0) throw new Error("BAD_AMOUNT");
+  if (!amt || amt <= 0) throw new Error("BAD_AMOUNT");
 
   return prisma.$transaction(async (tx) => {
-    // читаем лот
-    let lot = await tx.lot.findUnique({ where: { id: lotIdStr } });
+    let lot = await tx.lot.findUnique({
+      where: { id: lotIdStr },
+    });
+
     if (!lot) throw new Error("LOT_NOT_FOUND");
 
-    // сохраним предыдущего лидера ДО обновления
-    const prevLeaderUserId = lot.leaderUserId ? String(lot.leaderUserId) : null;
-    const prevLeaderPrice = Number(lot.currentPrice || 0);
+    const prevLeaderUserId = lot.leaderUserId || null;
+    const prevLeaderPrice = lot.currentPrice || 0;
 
-    // обновим статус по времени
     const nextStatus = computeStatus(lot);
+
     if (nextStatus !== lot.status) {
       await tx.lot.update({
         where: { id: lot.id },
         data: { status: nextStatus },
       });
-      lot = { ...lot, status: nextStatus };
+
+      lot.status = nextStatus;
     }
 
-    if (lot.status !== "LIVE") throw new Error("LOT_CLOSED");
+    if (lot.status !== "LIVE")
+      throw new Error("LOT_CLOSED");
 
     const min = lot.currentPrice + lot.bidStep;
     if (amt < min) throw new Error("MIN_BID_" + min);
 
-    // атомарно обновляем цену только если ставка >= min
     const updated = await tx.lot.updateMany({
       where: {
         id: lotIdStr,
         status: "LIVE",
-        // эквивалент: amt >= currentPrice + bidStep
-        currentPrice: { lte: amt - lot.bidStep },
+        currentPrice: {
+          lte: amt - lot.bidStep,
+        },
       },
       data: {
         currentPrice: amt,
@@ -168,12 +215,17 @@ export async function placeBid({ lotId, userId, userName, amount }) {
     });
 
     if (updated.count !== 1) {
-      const fresh = await tx.lot.findUnique({ where: { id: lotIdStr } });
-      const freshMin = (fresh?.currentPrice || 0) + (fresh?.bidStep || 0);
+      const fresh = await tx.lot.findUnique({
+        where: { id: lotIdStr },
+      });
+
+      const freshMin =
+        (fresh?.currentPrice || 0) +
+        (fresh?.bidStep || 0);
+
       throw new Error("MIN_BID_" + freshMin);
     }
 
-    // пишем ставку
     const bid = await tx.bid.create({
       data: {
         lotId: lotIdStr,
@@ -183,7 +235,9 @@ export async function placeBid({ lotId, userId, userName, amount }) {
       },
     });
 
-    const updatedLot = await tx.lot.findUnique({ where: { id: lotIdStr } });
+    const updatedLot = await tx.lot.findUnique({
+      where: { id: lotIdStr },
+    });
 
     return {
       bid,
@@ -197,109 +251,75 @@ export async function placeBid({ lotId, userId, userName, amount }) {
 }
 
 /* ===============================
-   USER BID HISTORY
-================================ */
-export async function listUserBids(userId) {
-  const uid = String(userId);
-
-  const bids = await prisma.bid.findMany({
-    where: { userId: uid },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-    include: { lot: true },
-  });
-
-  return bids.map((b) => ({
-    id: b.id,
-    lotId: b.lotId,
-    amount: b.amount,
-    createdAt: b.createdAt,
-    lot: b.lot
-      ? {
-          id: b.lot.id,
-          title: b.lot.title,
-          imageUrl: b.lot.imageUrl,
-          status: b.lot.status,
-          currentPrice: b.lot.currentPrice,
-          endsAt: b.lot.endsAt,
-        }
-      : null,
-  }));
-}
-
-/* ===============================
    COMMENTS
 ================================ */
-export async function addComment({ lotId, userId, userName, text }) {
-  const lotIdStr = String(lotId);
-  const uid = String(userId);
-  const uname = String(userName || "Користувач");
+export async function addComment({
+  lotId,
+  userId,
+  userName,
+  text,
+}) {
   const t = String(text || "").trim();
-
   if (!t) throw new Error("EMPTY_COMMENT");
-  if (t.length > 500) throw new Error("COMMENT_TOO_LONG");
-
-  // проверим, что лот есть
-  const lot = await prisma.lot.findUnique({ where: { id: lotIdStr } });
-  if (!lot) throw new Error("LOT_NOT_FOUND");
 
   return prisma.comment.create({
     data: {
-      lotId: lotIdStr,
-      userId: uid,
-      userName: uname,
+      lotId: String(lotId),
+      userId: String(userId),
+      userName: String(userName || "Користувач"),
       text: t,
     },
   });
 }
 
-export async function listComments(lotId, take = 50) {
-  const lotIdStr = String(lotId);
-  const n = Math.max(1, Math.min(200, toInt(take, 50)));
-
+export async function listComments(
+  lotId,
+  take = 50
+) {
   return prisma.comment.findMany({
-    where: { lotId: lotIdStr },
+    where: { lotId: String(lotId) },
     orderBy: { createdAt: "desc" },
-    take: n,
+    take,
   });
 }
 
 /* ===============================
-   AUTO BID (base)
-   - хранение максимума ставки пользователя
-   - дальше можно подключить логику авто-перебития
+   AUTO BID
 ================================ */
-export async function setAutoBid({ lotId, userId, userName, maxAmount, isActive = true }) {
-  const lotIdStr = String(lotId);
-  const uid = String(userId);
-  const uname = String(userName || "Користувач");
-  const max = Math.max(0, toInt(maxAmount, 0));
-  const active = Boolean(isActive);
-
-  const lot = await prisma.lot.findUnique({ where: { id: lotIdStr } });
-  if (!lot) throw new Error("LOT_NOT_FOUND");
-
+export async function setAutoBid({
+  lotId,
+  userId,
+  userName,
+  maxAmount,
+  isActive = true,
+}) {
   return prisma.autoBid.upsert({
-    where: { lotId_userId: { lotId: lotIdStr, userId: uid } },
-    update: { maxAmount: max, isActive: active, userName: uname },
-    create: { lotId: lotIdStr, userId: uid, userName: uname, maxAmount: max, isActive: active },
-  });
-}
-
-export async function disableAutoBid({ lotId, userId }) {
-  const lotIdStr = String(lotId);
-  const uid = String(userId);
-
-  return prisma.autoBid.update({
-    where: { lotId_userId: { lotId: lotIdStr, userId: uid } },
-    data: { isActive: false },
+    where: {
+      lotId_userId: {
+        lotId: String(lotId),
+        userId: String(userId),
+      },
+    },
+    update: {
+      maxAmount: toInt(maxAmount),
+      isActive,
+      userName,
+    },
+    create: {
+      lotId: String(lotId),
+      userId: String(userId),
+      userName,
+      maxAmount: toInt(maxAmount),
+      isActive,
+    },
   });
 }
 
 /* ===============================
-   DELETE LOT (ADMIN / BOT)
+   DELETE LOT
 ================================ */
 export async function deleteLot(lotId) {
-  const id = String(lotId);
-  return prisma.lot.delete({ where: { id } });
+  return prisma.lot.delete({
+    where: { id: String(lotId) },
+  });
 }
