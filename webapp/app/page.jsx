@@ -53,6 +53,13 @@ function resolveImage(url) {
   return url;
 }
 
+function fmtLeft(msLeft) {
+  const s = Math.max(0, Math.floor(msLeft / 1000));
+  const mm = String(Math.floor(s / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
 function statusBadge(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
   if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#7a7a7a" };
@@ -108,6 +115,13 @@ export default function HomePage() {
     };
   }, []);
 
+
+  // ✅ mini timers on cards
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
   const counts = useMemo(() => {
     const c = { LIVE: 0, SOON: 0, ENDED: 0 };
     for (const l of lots) {
@@ -378,6 +392,11 @@ export default function HomePage() {
             const img = resolveImage(l.imageUrl);
             const badge = statusBadge(normalizeStatus(l.status));
             const isFav = favIds.includes(String(l.id));
+
+            const endMs = l?.endsAt ? new Date(l.endsAt).getTime() : 0;
+            const msLeft = endMs ? endMs - Date.now() : 0;
+            const endingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 120_000; // 2 хв
+            const timerText = normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
 
             const badgeText =
               badge.text === "LIVE" ? "🔥 LIVE" : badge.text === "ЗАВЕРШЕНО" ? "🏁 ЗАВЕРШЕНО" : "⏳ СКОРО";
