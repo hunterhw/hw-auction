@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
@@ -76,7 +76,6 @@ function statusBadge(status) {
 }
 
 function normalizeStatus(s) {
-  // keep your tab naming logic
   if (s === "SCHEDULED") return "SOON";
   return s;
 }
@@ -89,8 +88,10 @@ export default function HomePage() {
   const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED | FAV
 
   const [favIds, setFavIds] = useState([]);
-   const [flash, setFlash] = useState({}); // { [lotId]: true }
-   const prevPriceRef = useMemo(() => ({ map: {} }), []); // simple stable object
+
+  // ✅ track previous prices safely (no re-renders)
+  const prevPricesRef = useRef({}); // { [lotId]: number }
+  const [flash, setFlash] = useState({}); // { [lotId]: true }
 
   useEffect(() => {
     tgReady();
@@ -111,44 +112,42 @@ export default function HomePage() {
 
         setErr("");
         const raw = Array.isArray(r?.lots) ? r.lots : [];
-       const fixed = raw.map((x) => ({ ...x, status: normalizeStatus(x.status) }));
+        const fixed = raw.map((x) => ({ ...x, status: normalizeStatus(x.status) }));
 
-// ✅ detect price changes (new bids) -> flash + haptic
-const nextFlash = {};
-let anyLivePriceChange = false;
+        // ✅ detect LIVE price changes -> flash + haptic
+        const nextFlash = {};
+        let anyLivePriceChange = false;
 
-for (const l of fixed) {
-  const id = String(l.id);
-  const prev = prevPriceRef.map[id];
-  const cur = Number(l.currentPrice || 0);
+        for (const l of fixed) {
+          const id = String(l.id);
+          const prev = prevPricesRef.current[id];
+          const cur = Number(l.currentPrice || 0);
 
-  // only for LIVE lots
-  if (normalizeStatus(l.status) === "LIVE" && prev != null && prev !== cur) {
-    nextFlash[id] = true;
-    anyLivePriceChange = true;
-  }
-  prevPriceRef.map[id] = cur;
-}
+          if (normalizeStatus(l.status) === "LIVE" && prev != null && prev !== cur) {
+            nextFlash[id] = true;
+            anyLivePriceChange = true;
+          }
 
-if (Object.keys(nextFlash).length) {
-  setFlash((old) => ({ ...old, ...nextFlash }));
-  // clear flashes after short time
-  setTimeout(() => {
-    setFlash((old) => {
-      const copy = { ...old };
-      for (const k of Object.keys(nextFlash)) delete copy[k];
-      return copy;
-    });
-  }, 650);
-}
+          prevPricesRef.current[id] = cur;
+        }
 
-if (anyLivePriceChange && tab === "LIVE") {
-  haptic("notification", "warning");
-  haptic("impact", "heavy");
-}
+        if (Object.keys(nextFlash).length) {
+          setFlash((old) => ({ ...old, ...nextFlash }));
+          setTimeout(() => {
+            setFlash((old) => {
+              const copy = { ...old };
+              for (const k of Object.keys(nextFlash)) delete copy[k];
+              return copy;
+            });
+          }, 650);
+        }
 
-setLots(fixed);
+        if (anyLivePriceChange && tab === "LIVE") {
+          haptic("notification", "warning");
+          haptic("impact", "heavy");
+        }
 
+        setLots(fixed);
       } catch {
         setErr("Помилка з’єднання (API).");
       }
@@ -160,7 +159,8 @@ setLots(fixed);
       alive = false;
       clearInterval(t);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   // ✅ mini timers on cards
   const [tick, setTick] = useState(0);
@@ -231,7 +231,7 @@ setLots(fixed);
         backgroundAttachment: "fixed",
       }}
     >
-      {/* Global CSS (plain style tag, not styled-jsx) */}
+      {/* Global CSS */}
       <style>{`
         .hw-header {
           position: sticky;
@@ -251,75 +251,75 @@ setLots(fixed);
           align-items: center;
           gap: 8px;
         }
+        .hw-live-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 999px;
+          background: #19c37d;
+          box-shadow: 0 0 0 rgba(25,195,125,0.6);
+          animation: hwPulse 1.3s infinite;
+        }
+        @keyframes hwPulse {
+          0% { box-shadow: 0 0 0 0 rgba(25,195,125,0.55); }
+          70% { box-shadow: 0 0 0 10px rgba(25,195,125,0); }
+          100% { box-shadow: 0 0 0 0 rgba(25,195,125,0); }
+        }
         .hw-card {
           transition: transform 140ms ease, box-shadow 180ms ease, border-color 180ms ease;
           box-shadow: 0 10px 26px rgba(0,0,0,0.25);
         }
         .hw-card:active { transform: scale(0.985); }
         .hw-card:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(0,0,0,0.32); border-color: rgba(255,255,255,0.16); }
-        .hw-chip {
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(17,17,17,0.8);
-        }
-        .hw-tab {
-          border: 1px solid #2c2c2c;
-          background: rgba(17,17,17,0.86);
-          transition: transform 120ms ease, border-color 180ms ease, background 180ms ease;
-        }
+        .hw-chip { border: 1px solid rgba(255,255,255,0.12); background: rgba(17,17,17,0.8); }
+        .hw-tab { border: 1px solid #2c2c2c; background: rgba(17,17,17,0.86); transition: transform 120ms ease, border-color 180ms ease, background 180ms ease; }
         .hw-tab:active { transform: scale(0.985); }
-        .hw-thumb {
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(10,10,10,0.9);
+        .hw-thumb { border: 1px solid rgba(255,255,255,0.12); background: rgba(10,10,10,0.9); }
+
+        .hw-flash { animation: hwFlash 650ms ease-out; }
+        @keyframes hwFlash {
+          0% { box-shadow: 0 0 0 rgba(255,255,255,0), 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
+          35% { box-shadow: 0 0 22px rgba(62,136,247,0.28), 0 16px 40px rgba(0,0,0,0.35); border-color: rgba(62,136,247,0.32); }
+          100% { box-shadow: 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
         }
-        .hw-flash {
-  animation: hwFlash 650ms ease-out;
-}
-@keyframes hwFlash {
-  0% { box-shadow: 0 0 0 rgba(255,255,255,0), 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
-  35% { box-shadow: 0 0 22px rgba(62,136,247,0.28), 0 16px 40px rgba(0,0,0,0.35); border-color: rgba(62,136,247,0.32); }
-  100% { box-shadow: 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
-}
 
-.hw-mini-timer {
-  margin-top: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 900;
-  opacity: 0.9;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(0,0,0,0.35);
-}
-
-.hw-mini-timer.hot {
-  border-color: rgba(255,77,77,0.28);
-  background: rgba(255,77,77,0.14);
-  animation: hwBlink 1s infinite;
-}
-@keyframes hwBlink {
-  0% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.03); opacity: 0.75; }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-.hw-hot-pill {
-  margin-left: 8px;
-  font-size: 10px;
-  font-weight: 1000;
-  padding: 3px 7px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,77,77,0.28);
-  background: rgba(255,77,77,0.14);
-}
-
+        .hw-mini-timer {
+          margin-top: 6px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 11px;
+          font-weight: 900;
+          opacity: 0.9;
+          padding: 4px 8px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(0,0,0,0.35);
+        }
+        .hw-mini-timer.hot {
+          border-color: rgba(255,77,77,0.28);
+          background: rgba(255,77,77,0.14);
+          animation: hwBlink 1s infinite;
+        }
+        @keyframes hwBlink {
+          0% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.03); opacity: 0.75; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .hw-hot-pill {
+          margin-left: 8px;
+          font-size: 10px;
+          font-weight: 1000;
+          padding: 3px 7px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,77,77,0.28);
+          background: rgba(255,77,77,0.14);
+        }
       `}</style>
 
       {/* Header */}
       <div className="hw-header">
         <div className="hw-title">
+          <span className="hw-live-dot" />
           <span>ГОЛОВНА</span>
         </div>
         <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
@@ -477,12 +477,10 @@ setLots(fixed);
             const timerText =
               normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
 
+            const endingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 120_000;
+
             const badgeText =
-              badge.text === "LIVE"
-                ? "LIVE"
-                : badge.text === "ЗАВЕРШЕНО"
-                ? "ЗАВЕРШЕНО"
-                : "СКОРО";
+              badge.text === "LIVE" ? "LIVE" : badge.text === "ЗАВЕРШЕНО" ? "ЗАВЕРШЕНО" : "СКОРО";
 
             return (
               <Link
@@ -548,21 +546,21 @@ setLots(fixed);
                     ₴{l.currentPrice}
                     <span style={{ opacity: 0.65, fontWeight: 800 }}> / крок ₴{l.bidStep}</span>
                   </div>
-                   {timerText && (
-  <div className={`hw-mini-timer ${endingSoon ? "hot" : ""}`}>
-    ⏱ {timerText}
-    {endingSoon && <span className="hw-hot-pill">🔥 HOT</span>}
-  </div>
-)}
 
+                  {timerText && (
+                    <div className={`hw-mini-timer ${endingSoon ? "hot" : ""}`}>
+                      ⏱ {timerText}
+                      {endingSoon && <span className="hw-hot-pill">🔥 HOT</span>}
+                    </div>
+                  )}
 
                   {/* subtle time info */}
                   <div style={{ marginTop: 6, fontSize: 11, opacity: 0.70, fontWeight: 800 }}>
                     {normalizeStatus(l.status) === "LIVE" && timerText
                       ? `Залишилось: ${timerText}`
                       : l.endsAt
-                      ? `Завершення: ${new Date(l.endsAt).toLocaleString()}`
-                      : ""}
+                        ? `Завершення: ${new Date(l.endsAt).toLocaleString()}`
+                        : ""}
                   </div>
                 </div>
 
@@ -618,15 +616,7 @@ setLots(fixed);
         </div>
 
         {/* Footer hint */}
-        <div
-          style={{
-            marginTop: 18,
-            opacity: 0.65,
-            fontSize: 12,
-            fontWeight: 800,
-            textAlign: "center",
-          }}
-        >
+        <div style={{ marginTop: 18, opacity: 0.65, fontSize: 12, fontWeight: 800, textAlign: "center" }}>
           Порада: додай лоти в ⭐, щоб швидко стежити за боротьбою.
         </div>
       </div>
