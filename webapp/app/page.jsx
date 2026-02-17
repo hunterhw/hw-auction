@@ -60,6 +60,15 @@ function fmtLeft(msLeft) {
   return `${mm}:${ss}`;
 }
 
+function haptic(type = "impact", style = "medium") {
+  try {
+    const H = window?.Telegram?.WebApp?.HapticFeedback;
+    if (!H) return;
+    if (type === "impact") H.impactOccurred(style);
+    if (type === "notification") H.notificationOccurred(style);
+  } catch {}
+}
+
 function statusBadge(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
   if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#7a7a7a" };
