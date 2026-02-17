@@ -269,7 +269,7 @@ export async function telegramWebhook(req, res) {
       await setMyCommands();
       await sendMessage(
         chatId,
-        "👋 Адмін меню (кнопки нижче) або команди:\n/newlot\n/lots\n/dellot <id>\n/cancel",
+        "👋 Адмін меню (кнопки нижче) або команди:\n/newlot\n/lots\n/dellot <code>&lt;id&gt;</code>\n/cancel",
         adminMenuKeyboard()
       );
       return res.json({ ok: true });
