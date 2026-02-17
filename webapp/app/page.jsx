@@ -237,7 +237,52 @@ export default function HomePage() {
           border: 1px solid rgba(255,255,255,0.12);
           background: rgba(10,10,10,0.9);
         }
-      `}</style>
+      
+        .hw-dot{
+          width:8px;height:8px;border-radius:999px;
+          display:inline-block;
+          margin-right:6px;
+          background: currentColor;
+          box-shadow: 0 0 0 0 rgba(255,255,255,0.0);
+          animation: hwPulse 1.15s infinite;
+        }
+        @keyframes hwPulse{
+          0%{ transform: scale(0.85); opacity: .75; box-shadow: 0 0 0 0 rgba(255,255,255,0.0); }
+          60%{ transform: scale(1.05); opacity: 1; box-shadow: 0 0 0 10px rgba(255,255,255,0.0); }
+          100%{ transform: scale(0.85); opacity: .75; box-shadow: 0 0 0 0 rgba(255,255,255,0.0); }
+        }
+
+        .hw-progress{
+          grid-column: 1 / -1;
+          height: 6px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.08);
+          overflow: hidden;
+          border: 1px solid rgba(255,255,255,0.10);
+          margin-top: 10px;
+        }
+        .hw-progress > i{
+          display:block;
+          height:100%;
+          width: var(--p, 0%);
+          background: var(--c, rgba(255,255,255,0.45));
+          border-radius: 999px;
+          transition: width 350ms ease;
+          position: relative;
+        }
+        .hw-progress > i:after{
+          content:"";
+          position:absolute; inset:0;
+          background: linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.22), rgba(255,255,255,0.00));
+          transform: translateX(-60%);
+          animation: hwShine 1.6s infinite;
+        }
+        @keyframes hwShine{
+          0%{ transform: translateX(-60%); }
+          100%{ transform: translateX(160%); }
+        }
+
+`}</style>
 
       {/* Header */}
       <div className="hw-header">
@@ -391,7 +436,24 @@ export default function HomePage() {
           {filtered.map((l) => {
             const img = resolveImage(l.imageUrl);
             const badge = statusBadge(normalizeStatus(l.status));
+            const stNorm = normalizeStatus(l.status);
+            const isLive = stNorm === "LIVE";
+
             const isFav = favIds.includes(String(l.id));
+            const now = Date.now();
+            const startMs = l?.startsAt ? new Date(l.startsAt).getTime() : 0;
+            const endMs = l?.endsAt ? new Date(l.endsAt).getTime() : 0;
+            const durMs = Math.max(1, endMs - startMs);
+            const leftMs = Math.max(0, endMs - now);
+            const pctLeft = Math.max(0, Math.min(1, leftMs / durMs));
+            const barP = `${Math.round(pctLeft * 100)}%`;
+            const barC =
+              normalizeStatus(l.status) === "LIVE"
+                ? "rgba(25,195,125,0.85)"
+                : normalizeStatus(l.status) === "SOON"
+                  ? "rgba(255,255,255,0.35)"
+                  : "rgba(255,255,255,0.20)";
+
 
             const endMs = l?.endsAt ? new Date(l.endsAt).getTime() : 0;
             const msLeft = endMs ? endMs - Date.now() : 0;
@@ -510,9 +572,14 @@ export default function HomePage() {
                     border: "1px solid rgba(255,255,255,0.14)",
                   }}
                 >
-                  {badgeText}
+                  {isLive ? <span className="hw-dot" /> : null}{badgeText}
                 </div>
-              </Link>
+              
+                {/* progress */}
+                <div className="hw-progress" aria-hidden="true">
+                  <i style={{ "--p": barP, "--c": barC }} />
+                </div>
+</Link>
             );
           })}
 
