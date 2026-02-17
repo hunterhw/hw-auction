@@ -41,24 +41,39 @@ function resolveImage(url) {
   if (!url) return null;
 
   // полный URL
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return url;
-  }
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
 
-  // uploads с бэка
+  // uploads с бэка (например: /uploads/xxx.jpg)
   if (url.startsWith("/uploads/")) {
-    const base =
-      process.env.NEXT_PUBLIC_API_BASE ||
-      "https://hw-auction-backend.onrender.com"; // ← твой backend
-
+    const base = process.env.NEXT_PUBLIC_API_BASE || "";
     return `${base}${url}`;
   }
 
-  // локальные public картинки
+  // все остальное (/bmw-sth.jpg) — это фронт (public)
   return url;
 }
 
-function statusBadge(status) {
+
+function fmtCountdown(msLeft) {
+  const s = Math.max(0, Math.floor(msLeft / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${ss}`;
+  return `${String(m).padStart(2, "0")}:${ss}`;
+}
+
+function msUntil(dateIso, nowMs) {
+  if (!dateIso) return 0;
+  const t = new Date(dateIso).getTime();
+  return t - nowMs;
+}
+
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+
+(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
   if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#777" };
   return { text: "СКОРО", bg: "#777" };
@@ -78,6 +93,13 @@ export default function HomePage() {
   const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED | FAV
 
   const [favIds, setFavIds] = useState([]);
+
+  // ✅ local tick for countdowns / animations
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     tgReady();
@@ -159,10 +181,60 @@ export default function HomePage() {
     });
 
     return arr;
-  }, [lots, query, tab, favIds]);
+  }, [lots, query, tab, favIds, tick]);
 
   return (
     <div
+
+      <style jsx global>{`
+        .hw-card { 
+          transition: transform 120ms ease, box-shadow 180ms ease, border-color 180ms ease;
+          box-shadow: 0 10px 26px rgba(0,0,0,0.25);
+        }
+        .hw-card:active { transform: scale(0.99); }
+        .hw-live { border-color: rgba(25,195,125,0.55) !important; }
+        .hw-ended { opacity: 0.92; }
+        .hw-soon { border-color: rgba(160,160,160,0.35) !important; }
+        .hw-ending { animation: hwPulse 1.2s ease-in-out infinite; }
+        .hw-ultra { animation: hwPulseHot 0.8s ease-in-out infinite; }
+
+        .hw-chip {
+          font-size: 11px;
+          font-weight: 900;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(0,0,0,0.35);
+          letter-spacing: 0.2px;
+        }
+        .hw-chip-live { background: rgba(25,195,125,0.14); border-color: rgba(25,195,125,0.35); }
+        .hw-chip-hot { background: rgba(255,77,77,0.14); border-color: rgba(255,77,77,0.35); }
+        .hw-chip-soon { background: rgba(62,136,247,0.14); border-color: rgba(62,136,247,0.35); }
+        .hw-chip-ended { background: rgba(160,160,160,0.14); border-color: rgba(160,160,160,0.30); }
+
+        .hw-thumb { position: relative; width: 100%; height: 100%; }
+        .hw-thumb-overlay {
+          position: absolute; inset: 0;
+          background: linear-gradient(180deg, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.55) 100%);
+          pointer-events: none;
+        }
+        .hw-live-dot {
+          position: absolute; left: 8px; top: 8px;
+          width: 10px; height: 10px; border-radius: 999px;
+          background: rgba(25,195,125,1);
+          box-shadow: 0 0 0 4px rgba(25,195,125,0.18), 0 0 16px rgba(25,195,125,0.55);
+          animation: hwBlink 1.4s ease-in-out infinite;
+        }
+        .hw-live-dot-hot {
+          background: rgba(255,77,77,1);
+          box-shadow: 0 0 0 4px rgba(255,77,77,0.18), 0 0 16px rgba(255,77,77,0.55);
+        }
+
+        @keyframes hwBlink { 0%,100%{transform:scale(1); opacity:1} 50%{transform:scale(0.85); opacity:0.55} }
+        @keyframes hwPulse { 0%,100%{ box-shadow: 0 10px 26px rgba(0,0,0,0.25);} 50%{ box-shadow: 0 16px 36px rgba(255,77,77,0.12);} }
+        @keyframes hwPulseHot { 0%,100%{ box-shadow: 0 12px 30px rgba(255,77,77,0.18);} 50%{ box-shadow: 0 22px 46px rgba(255,77,77,0.30);} }
+      `}</style>
+
       style={{
         minHeight: "100vh",
         color: "white",
@@ -190,7 +262,11 @@ export default function HomePage() {
           ГОЛОВНА
         </div>
         <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
-          HW HUNTER AUCTION
+          HW HUNTER AUCTION <span style={{ marginLeft: 6, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {counts.LIVE > 0 && (
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "#19c37d", boxShadow: "0 0 12px rgba(25,195,125,0.6)", animation: "hwBlink 1.4s ease-in-out infinite" }} />
+            )}
+          </span>
         </div>
 
         {/* Поиск */}
@@ -301,10 +377,18 @@ export default function HomePage() {
             const badge = statusBadge(normalizeStatus(l.status));
             const isFav = favIds.includes(String(l.id));
 
+            const nowMs = Date.now();
+            const msLeft = msUntil(l?.endsAt, nowMs);
+            const msToStart = msUntil(l?.startsAt, nowMs);
+            const isEndingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 10 * 60 * 1000;
+            const isUltraHot = normalizeStatus(l.status) === "LIVE" && msLeft <= 60 * 1000;
+            const isSoon = normalizeStatus(l.status) === "SOON" && msToStart <= 10 * 60 * 1000 && msToStart > 0;
+
             return (
               <Link
                 key={l.id}
                 href={`/lot/${l.id}`}
+                className={`hw-card ${normalizeStatus(l.status) === "LIVE" ? "hw-live" : normalizeStatus(l.status) === "ENDED" ? "hw-ended" : "hw-soon"} ${isEndingSoon ? "hw-ending" : ""} ${isUltraHot ? "hw-ultra" : ""}`}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "64px 1fr 40px auto",
@@ -334,7 +418,8 @@ export default function HomePage() {
                   }}
                 >
                   {img ? (
-                    <img
+                    <div className="hw-thumb">
+                      <img
                       src={img}
                       alt={l.title}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
@@ -364,9 +449,30 @@ export default function HomePage() {
                   <div style={{ marginTop: 6, opacity: 0.85, fontWeight: 900 }}>
                     ₴{l.currentPrice}
                     <span style={{ opacity: 0.65, fontWeight: 800 }}>
-                      {" "}
-                      / крок ₴{l.bidStep}
+                      {" "}/ крок ₴{l.bidStep}
                     </span>
+                  </div>
+
+                  <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {normalizeStatus(l.status) === "LIVE" && (
+                      <div className={`hw-chip ${isEndingSoon ? "hw-chip-hot" : "hw-chip-live"}`}>
+                        {isUltraHot ? "🔥 ФІНІШ" : isEndingSoon ? "⚡ ЗАКІНЧУЄТЬСЯ" : "⏱ ДО КІНЦЯ"}
+                        <span style={{ marginLeft: 6, fontWeight: 1000 }}>{fmtCountdown(msLeft)}</span>
+                      </div>
+                    )}
+
+                    {normalizeStatus(l.status) === "SOON" && (
+                      <div className={`hw-chip ${isSoon ? "hw-chip-soon" : ""}`}>
+                        🕒 СТАРТ
+                        <span style={{ marginLeft: 6, fontWeight: 1000 }}>
+                          {msToStart > 0 ? fmtCountdown(msToStart) : "скоро"}
+                        </span>
+                      </div>
+                    )}
+
+                    {normalizeStatus(l.status) === "ENDED" && (
+                      <div className="hw-chip hw-chip-ended">✅ ЗАВЕРШЕНО</div>
+                    )}
                   </div>
                 </div>
 
