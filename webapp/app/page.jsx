@@ -115,13 +115,13 @@ export default function HomePage() {
     };
   }, []);
 
-
   // ✅ mini timers on cards
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 1000);
     return () => clearInterval(t);
   }, []);
+
   const counts = useMemo(() => {
     const c = { LIVE: 0, SOON: 0, ENDED: 0 };
     for (const l of lots) {
@@ -163,10 +163,10 @@ export default function HomePage() {
   }, [lots, query, tab, favIds]);
 
   const heroText = useMemo(() => {
-    if (tab === "LIVE") return "Зараз йде боротьба — встигни забрати лот 🔥";
-    if (tab === "SOON") return "Готуйся — скоро стартує 🚀";
-    if (tab === "ENDED") return "Завершені — можна подивитись історію 🏁";
-    return "Твої обрані лоти ⭐";
+    if (tab === "LIVE") return "Зараз йде боротьба — встигни забрати лот";
+    if (tab === "SOON") return "Готуйся — скоро стартує";
+    if (tab === "ENDED") return "Завершені — можна подивитись історію";
+    return "Твої обрані лоти";
   }, [tab]);
 
   return (
@@ -204,19 +204,6 @@ export default function HomePage() {
           align-items: center;
           gap: 8px;
         }
-        .hw-live-dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 999px;
-          background: #19c37d;
-          box-shadow: 0 0 0 rgba(25,195,125,0.6);
-          animation: hwPulse 1.3s infinite;
-        }
-        @keyframes hwPulse {
-          0% { box-shadow: 0 0 0 0 rgba(25,195,125,0.55); }
-          70% { box-shadow: 0 0 0 10px rgba(25,195,125,0); }
-          100% { box-shadow: 0 0 0 0 rgba(25,195,125,0); }
-        }
         .hw-card {
           transition: transform 140ms ease, box-shadow 180ms ease, border-color 180ms ease;
           box-shadow: 0 10px 26px rgba(0,0,0,0.25);
@@ -242,7 +229,6 @@ export default function HomePage() {
       {/* Header */}
       <div className="hw-header">
         <div className="hw-title">
-          <span className="hw-live-dot" />
           <span>ГОЛОВНА</span>
         </div>
         <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
@@ -351,7 +337,9 @@ export default function HomePage() {
           <div style={{ fontWeight: 1000, lineHeight: 1.25 }}>
             {heroText}
             <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
-              {tab === "LIVE" ? "Тисни на лот, роби ставку — і тримай темп." : "Перемикай вкладки та додавай в ⭐ обране."}
+              {tab === "LIVE"
+                ? "Тисни на лот, роби ставку — і тримай темп."
+                : "Перемикай вкладки та додавай в ⭐ обране."}
             </div>
           </div>
 
@@ -393,14 +381,17 @@ export default function HomePage() {
             const badge = statusBadge(normalizeStatus(l.status));
             const isFav = favIds.includes(String(l.id));
 
-            // ⚠️ unique name to avoid accidental redeclare in build merges
             const endAtMs = l?.endsAt ? new Date(l.endsAt).getTime() : 0;
             const msLeft = endAtMs ? endAtMs - Date.now() : 0;
-            const endingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 120_000; // 2 хв
-            const timerText = normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
+            const timerText =
+              normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
 
             const badgeText =
-              badge.text === "LIVE" ? "🔥 LIVE" : badge.text === "ЗАВЕРШЕНО" ? "🏁 ЗАВЕРШЕНО" : "⏳ СКОРО";
+              badge.text === "LIVE"
+                ? "LIVE"
+                : badge.text === "ЗАВЕРШЕНО"
+                ? "ЗАВЕРШЕНО"
+                : "СКОРО";
 
             return (
               <Link
@@ -469,7 +460,11 @@ export default function HomePage() {
 
                   {/* subtle time info */}
                   <div style={{ marginTop: 6, fontSize: 11, opacity: 0.70, fontWeight: 800 }}>
-                    {l.endsAt ? `Завершення: ${new Date(l.endsAt).toLocaleString()}` : ""}
+                    {normalizeStatus(l.status) === "LIVE" && timerText
+                      ? `Залишилось: ${timerText}`
+                      : l.endsAt
+                      ? `Завершення: ${new Date(l.endsAt).toLocaleString()}`
+                      : ""}
                   </div>
                 </div>
 
@@ -525,7 +520,15 @@ export default function HomePage() {
         </div>
 
         {/* Footer hint */}
-        <div style={{ marginTop: 18, opacity: 0.65, fontSize: 12, fontWeight: 800, textAlign: "center" }}>
+        <div
+          style={{
+            marginTop: 18,
+            opacity: 0.65,
+            fontSize: 12,
+            fontWeight: 800,
+            textAlign: "center",
+          }}
+        >
           Порада: додай лоти в ⭐, щоб швидко стежити за боротьбою.
         </div>
       </div>
