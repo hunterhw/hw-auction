@@ -53,26 +53,6 @@ function resolveImage(url) {
   return url;
 }
 
-
-function fmtCountdown(msLeft) {
-  const s = Math.max(0, Math.floor(msLeft / 1000));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, "0");
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${ss}`;
-  return `${String(m).padStart(2, "0")}:${ss}`;
-}
-
-function msUntil(dateIso, nowMs) {
-  if (!dateIso) return 0;
-  const t = new Date(dateIso).getTime();
-  return t - nowMs;
-}
-
-function clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-
 function statusBadge(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
   if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#777" };
@@ -93,13 +73,6 @@ export default function HomePage() {
   const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED | FAV
 
   const [favIds, setFavIds] = useState([]);
-
-  // ✅ local tick for countdowns / animations
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   useEffect(() => {
     tgReady();
@@ -181,92 +154,76 @@ export default function HomePage() {
     });
 
     return arr;
-  }, [lots, query, tab, favIds, tick]);
+  }, [lots, query, tab, favIds]);
 
   return (
     <div
-
-      <style jsx global>{`
-        .hw-card { 
-          transition: transform 120ms ease, box-shadow 180ms ease, border-color 180ms ease;
-          box-shadow: 0 10px 26px rgba(0,0,0,0.25);
-        }
-        .hw-card:active { transform: scale(0.99); }
-        .hw-live { border-color: rgba(25,195,125,0.55) !important; }
-        .hw-ended { opacity: 0.92; }
-        .hw-soon { border-color: rgba(160,160,160,0.35) !important; }
-        .hw-ending { animation: hwPulse 1.2s ease-in-out infinite; }
-        .hw-ultra { animation: hwPulseHot 0.8s ease-in-out infinite; }
-
-        .hw-chip {
-          font-size: 11px;
-          font-weight: 900;
-          padding: 6px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(0,0,0,0.35);
-          letter-spacing: 0.2px;
-        }
-        .hw-chip-live { background: rgba(25,195,125,0.14); border-color: rgba(25,195,125,0.35); }
-        .hw-chip-hot { background: rgba(255,77,77,0.14); border-color: rgba(255,77,77,0.35); }
-        .hw-chip-soon { background: rgba(62,136,247,0.14); border-color: rgba(62,136,247,0.35); }
-        .hw-chip-ended { background: rgba(160,160,160,0.14); border-color: rgba(160,160,160,0.30); }
-
-        .hw-thumb { position: relative; width: 100%; height: 100%; }
-        .hw-thumb-overlay {
-          position: absolute; inset: 0;
-          background: linear-gradient(180deg, rgba(0,0,0,0.00) 40%, rgba(0,0,0,0.55) 100%);
-          pointer-events: none;
-        }
-        .hw-live-dot {
-          position: absolute; left: 8px; top: 8px;
-          width: 10px; height: 10px; border-radius: 999px;
-          background: rgba(25,195,125,1);
-          box-shadow: 0 0 0 4px rgba(25,195,125,0.18), 0 0 16px rgba(25,195,125,0.55);
-          animation: hwBlink 1.4s ease-in-out infinite;
-        }
-        .hw-live-dot-hot {
-          background: rgba(255,77,77,1);
-          box-shadow: 0 0 0 4px rgba(255,77,77,0.18), 0 0 16px rgba(255,77,77,0.55);
-        }
-
-        @keyframes hwBlink { 0%,100%{transform:scale(1); opacity:1} 50%{transform:scale(0.85); opacity:0.55} }
-        @keyframes hwPulse { 0%,100%{ box-shadow: 0 10px 26px rgba(0,0,0,0.25);} 50%{ box-shadow: 0 16px 36px rgba(255,77,77,0.12);} }
-        @keyframes hwPulseHot { 0%,100%{ box-shadow: 0 12px 30px rgba(255,77,77,0.18);} 50%{ box-shadow: 0 22px 46px rgba(255,77,77,0.30);} }
-      `}</style>
-
+      className="hw-root"
       style={{
         minHeight: "100vh",
         color: "white",
         backgroundImage:
-          "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.85)), url('/bg.jpg')",
+          "linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.9)), url('/bg.jpg')",
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundAttachment: "fixed",
       }}
     >
+      <style jsx global>{`
+        .hw-root * { box-sizing: border-box; }
+        @keyframes hwGlow {
+          0% { filter: drop-shadow(0 0 0 rgba(62,136,247,0.0)); }
+          50% { filter: drop-shadow(0 0 18px rgba(62,136,247,0.22)); }
+          100% { filter: drop-shadow(0 0 0 rgba(62,136,247,0.0)); }
+        }
+        @keyframes hwPulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.02); }
+          100% { transform: scale(1); }
+        }
+        .hw-hero {
+          position: sticky;
+          top: 0;
+          z-index: 50;
+          background: rgba(11,11,11,0.9);
+          backdrop-filter: blur(10px);
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .hw-title { animation: hwGlow 3.2s ease-in-out infinite; }
+        .hw-card {
+          transition: transform 140ms ease, box-shadow 220ms ease, border-color 220ms ease;
+          box-shadow: 0 10px 26px rgba(0,0,0,0.28);
+        }
+        .hw-card:active { transform: scale(0.992); }
+        @media (hover:hover) {
+          .hw-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 38px rgba(0,0,0,0.34);
+            border-color: rgba(255,255,255,0.18);
+          }
+        }
+        .hw-badge-live { animation: hwPulse 1.6s ease-in-out infinite; }
+      `}</style>
+
       {/* Шапка */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-          background: "rgba(11,11,11,0.92)",
-          backdropFilter: "blur(8px)",
-          borderBottom: "1px solid #222",
-          padding: "14px 16px 12px",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.5 }}>
-          ГОЛОВНА
+      <div className="hw-hero" style={{ padding: "14px 16px 12px", textAlign: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 10,
+              background: "linear-gradient(135deg, rgba(62,136,247,0.9), rgba(25,195,125,0.85))",
+              boxShadow: "0 10px 22px rgba(0,0,0,0.35)",
+            }}
+          />
+          <div className="hw-title" style={{ fontWeight: 1000, fontSize: 18, letterSpacing: 0.6 }}>
+            ГОЛОВНА
+          </div>
         </div>
-        <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
-          HW HUNTER AUCTION <span style={{ marginLeft: 6, display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {counts.LIVE > 0 && (
-              <span style={{ width: 8, height: 8, borderRadius: 999, background: "#19c37d", boxShadow: "0 0 12px rgba(25,195,125,0.6)", animation: "hwBlink 1.4s ease-in-out infinite" }} />
-            )}
-          </span>
+
+        <div style={{ marginTop: 4, opacity: 0.78, fontWeight: 900, fontSize: 12, letterSpacing: 0.9 }}>
+          HW HUNTER AUCTION
         </div>
 
         {/* Поиск */}
@@ -277,9 +234,9 @@ export default function HomePage() {
             placeholder="Пошук лота..."
             style={{
               width: "100%",
-              padding: "10px 12px",
+              padding: "11px 12px",
               borderRadius: 12,
-              border: "1px solid #2c2c2c",
+              border: "1px solid rgba(255,255,255,0.12)",
               background: "rgba(17,17,17,0.9)",
               color: "white",
               fontWeight: 800,
@@ -302,8 +259,8 @@ export default function HomePage() {
             style={{
               padding: "10px 10px",
               borderRadius: 12,
-              border: "1px solid #2c2c2c",
-              background: tab === "LIVE" ? "rgba(25,195,125,0.25)" : "rgba(17,17,17,0.9)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: tab === "LIVE" ? "rgba(25,195,125,0.22)" : "rgba(17,17,17,0.9)",
               color: "white",
               fontWeight: 1000,
             }}
@@ -316,7 +273,7 @@ export default function HomePage() {
             style={{
               padding: "10px 10px",
               borderRadius: 12,
-              border: "1px solid #2c2c2c",
+              border: "1px solid rgba(255,255,255,0.12)",
               background: tab === "SOON" ? "rgba(160,160,160,0.18)" : "rgba(17,17,17,0.9)",
               color: "white",
               fontWeight: 1000,
@@ -330,7 +287,7 @@ export default function HomePage() {
             style={{
               padding: "10px 10px",
               borderRadius: 12,
-              border: "1px solid #2c2c2c",
+              border: "1px solid rgba(255,255,255,0.12)",
               background: tab === "ENDED" ? "rgba(160,160,160,0.18)" : "rgba(17,17,17,0.9)",
               color: "white",
               fontWeight: 1000,
@@ -344,8 +301,8 @@ export default function HomePage() {
             style={{
               padding: "10px 10px",
               borderRadius: 12,
-              border: "1px solid #2c2c2c",
-              background: tab === "FAV" ? "rgba(62,136,247,0.22)" : "rgba(17,17,17,0.9)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: tab === "FAV" ? "rgba(62,136,247,0.2)" : "rgba(17,17,17,0.9)",
               color: "white",
               fontWeight: 1000,
             }}
@@ -361,34 +318,51 @@ export default function HomePage() {
             style={{
               padding: 12,
               borderRadius: 12,
-              border: "1px solid #3a1f1f",
-              background: "#1a1111",
+              border: "1px solid rgba(255,80,80,0.25)",
+              background: "rgba(26,17,17,0.9)",
               color: "white",
-              fontWeight: 800,
+              fontWeight: 900,
             }}
           >
             {err}
           </div>
         )}
 
+        {/* мини-статы */}
+        <div
+          style={{
+            marginTop: 12,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 10,
+          }}
+        >
+          <div style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(15,15,15,0.85)", borderRadius: 14, padding: 12 }}>
+            <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 900 }}>LIVE зараз</div>
+            <div style={{ marginTop: 4, fontWeight: 1000, fontSize: 18 }}>🔥 {counts.LIVE}</div>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(15,15,15,0.85)", borderRadius: 14, padding: 12 }}>
+            <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 900 }}>Скоро старт</div>
+            <div style={{ marginTop: 4, fontWeight: 1000, fontSize: 18 }}>⏱️ {counts.SOON}</div>
+          </div>
+          <div style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(15,15,15,0.85)", borderRadius: 14, padding: 12 }}>
+            <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 900 }}>Завершено</div>
+            <div style={{ marginTop: 4, fontWeight: 1000, fontSize: 18 }}>🏁 {counts.ENDED}</div>
+          </div>
+        </div>
+
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           {filtered.map((l) => {
             const img = resolveImage(l.imageUrl);
             const badge = statusBadge(normalizeStatus(l.status));
             const isFav = favIds.includes(String(l.id));
-
-            const nowMs = Date.now();
-            const msLeft = msUntil(l?.endsAt, nowMs);
-            const msToStart = msUntil(l?.startsAt, nowMs);
-            const isEndingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 10 * 60 * 1000;
-            const isUltraHot = normalizeStatus(l.status) === "LIVE" && msLeft <= 60 * 1000;
-            const isSoon = normalizeStatus(l.status) === "SOON" && msToStart <= 10 * 60 * 1000 && msToStart > 0;
+            const isLive = normalizeStatus(l.status) === "LIVE";
 
             return (
               <Link
                 key={l.id}
                 href={`/lot/${l.id}`}
-                className={`hw-card ${normalizeStatus(l.status) === "LIVE" ? "hw-live" : normalizeStatus(l.status) === "ENDED" ? "hw-ended" : "hw-soon"} ${isEndingSoon ? "hw-ending" : ""} ${isUltraHot ? "hw-ultra" : ""}`}
+                className="hw-card"
                 style={{
                   display: "grid",
                   gridTemplateColumns: "64px 1fr 40px auto",
@@ -396,12 +370,28 @@ export default function HomePage() {
                   alignItems: "center",
                   padding: 12,
                   borderRadius: 14,
-                  border: "1px solid #2c2c2c",
-                  background: "rgba(15,15,15,0.92)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "rgba(15,15,15,0.9)",
                   color: "white",
                   textDecoration: "none",
+                  position: "relative",
+                  overflow: "hidden",
                 }}
               >
+                {isLive && (
+                  <div
+                    aria-hidden
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      background:
+                        "linear-gradient(115deg, rgba(25,195,125,0.0), rgba(25,195,125,0.08), rgba(62,136,247,0.0))",
+                      opacity: 0.9,
+                      pointerEvents: "none",
+                    }}
+                  />
+                )}
+
                 {/* thumbnail */}
                 <div
                   style={{
@@ -409,30 +399,50 @@ export default function HomePage() {
                     height: 64,
                     borderRadius: 12,
                     overflow: "hidden",
-                    border: "1px solid #333",
+                    border: "1px solid rgba(255,255,255,0.14)",
                     background: "#111",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     flexShrink: 0,
+                    position: "relative",
                   }}
                 >
                   {img ? (
-                    <div className="hw-thumb">
-                      <img
+                    <img
                       src={img}
                       alt={l.title}
+                      onError={(e) => {
+                        try {
+                          e.currentTarget.src = "/placeholder.jpg";
+                        } catch {}
+                      }}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                     />
                   ) : (
-                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 800 }}>
-                      NO IMG
+                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 900 }}>NO IMG</div>
+                  )}
+                  {isLive && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 6,
+                        bottom: 6,
+                        padding: "3px 6px",
+                        borderRadius: 999,
+                        fontSize: 10,
+                        fontWeight: 1000,
+                        background: "rgba(0,0,0,0.55)",
+                        border: "1px solid rgba(255,255,255,0.2)",
+                      }}
+                    >
+                      🔥
                     </div>
                   )}
                 </div>
 
                 {/* title + price */}
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, position: "relative" }}>
                   <div
                     style={{
                       fontWeight: 1000,
@@ -446,40 +456,16 @@ export default function HomePage() {
                     {l.title}
                   </div>
 
-                  <div style={{ marginTop: 6, opacity: 0.85, fontWeight: 900 }}>
+                  <div style={{ marginTop: 6, opacity: 0.9, fontWeight: 1000 }}>
                     ₴{l.currentPrice}
-                    <span style={{ opacity: 0.65, fontWeight: 800 }}>
-                      {" "}/ крок ₴{l.bidStep}
-                    </span>
-                  </div>
-
-                  <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {normalizeStatus(l.status) === "LIVE" && (
-                      <div className={`hw-chip ${isEndingSoon ? "hw-chip-hot" : "hw-chip-live"}`}>
-                        {isUltraHot ? "🔥 ФІНІШ" : isEndingSoon ? "⚡ ЗАКІНЧУЄТЬСЯ" : "⏱ ДО КІНЦЯ"}
-                        <span style={{ marginLeft: 6, fontWeight: 1000 }}>{fmtCountdown(msLeft)}</span>
-                      </div>
-                    )}
-
-                    {normalizeStatus(l.status) === "SOON" && (
-                      <div className={`hw-chip ${isSoon ? "hw-chip-soon" : ""}`}>
-                        🕒 СТАРТ
-                        <span style={{ marginLeft: 6, fontWeight: 1000 }}>
-                          {msToStart > 0 ? fmtCountdown(msToStart) : "скоро"}
-                        </span>
-                      </div>
-                    )}
-
-                    {normalizeStatus(l.status) === "ENDED" && (
-                      <div className="hw-chip hw-chip-ended">✅ ЗАВЕРШЕНО</div>
-                    )}
+                    <span style={{ opacity: 0.65, fontWeight: 900 }}> / крок ₴{l.bidStep}</span>
                   </div>
                 </div>
 
                 {/* ⭐ favorite */}
                 <button
                   onClick={(e) => {
-                    e.preventDefault(); // не открывать лот
+                    e.preventDefault();
                     e.stopPropagation();
                     const next = toggleFavorite(l.id);
                     setFavIds(next);
@@ -488,13 +474,15 @@ export default function HomePage() {
                     width: 36,
                     height: 36,
                     borderRadius: 12,
-                    border: "1px solid #2c2c2c",
+                    border: "1px solid rgba(255,255,255,0.12)",
                     background: "rgba(17,17,17,0.9)",
                     color: "white",
                     fontWeight: 1000,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    position: "relative",
+                    zIndex: 2,
                   }}
                   aria-label="favorite"
                   title="Обране"
@@ -504,6 +492,7 @@ export default function HomePage() {
 
                 {/* badge */}
                 <div
+                  className={isLive ? "hw-badge-live" : ""}
                   style={{
                     padding: "6px 10px",
                     borderRadius: 999,
@@ -511,6 +500,9 @@ export default function HomePage() {
                     fontWeight: 1000,
                     fontSize: 12,
                     whiteSpace: "nowrap",
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    position: "relative",
+                    zIndex: 2,
                   }}
                 >
                   {badge.text}
@@ -520,7 +512,7 @@ export default function HomePage() {
           })}
 
           {filtered.length === 0 && !err && (
-            <div style={{ opacity: 0.7, fontWeight: 800, textAlign: "center", marginTop: 18 }}>
+            <div style={{ opacity: 0.7, fontWeight: 900, textAlign: "center", marginTop: 18 }}>
               {tab === "FAV" ? "Немає обраних лотів" : "Нічого не знайдено"}
             </div>
           )}
@@ -528,4 +520,5 @@ export default function HomePage() {
       </div>
     </div>
   );
+
 }
