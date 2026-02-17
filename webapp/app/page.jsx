@@ -73,7 +73,7 @@ function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
 
-(status) {
+function statusBadge(status) {
   if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
   if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#777" };
   return { text: "СКОРО", bg: "#777" };
