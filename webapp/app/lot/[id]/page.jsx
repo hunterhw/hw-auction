@@ -2,71 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { tgReady } from "@/lib/tg";
 
-/* =========================
-   ✅ FAVORITES (localStorage)
-========================= */
-const FAV_KEY = "hw_favorites_v1";
-const SND_KEY = "hw_sound_v1";
-
-function favSafeParse(s) {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
-}
-
-function getFavorites() {
-  if (typeof window === "undefined") return [];
-  const raw = window.localStorage.getItem(FAV_KEY);
-  const arr = favSafeParse(raw);
-  return Array.isArray(arr) ? arr.map(String) : [];
-}
-
-function toggleFavorite(id) {
-  if (typeof window === "undefined") return [];
-  const lotId = String(id);
-  const fav = getFavorites();
-  const next = fav.includes(lotId) ? fav.filter((x) => x !== lotId) : [lotId, ...fav];
-  window.localStorage.setItem(FAV_KEY, JSON.stringify(next.slice(0, 200)));
-  return next;
-}
-
-/* =========================
-   SOUND (localStorage toggle)
-========================= */
-function getSoundEnabled() {
-  if (typeof window === "undefined") return false;
-  return window.localStorage.getItem(SND_KEY) === "1";
-}
-function setSoundEnabled(v) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SND_KEY, v ? "1" : "0");
-}
-
-/* =========================
-   IMAGES
-========================= */
-function resolveImage(url) {
-  if (!url) return null;
-
-  // full URL
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-
-  // uploads from backend (e.g. /uploads/xxx.jpg)
-  if (url.startsWith("/uploads/")) {
-    const base = process.env.NEXT_PUBLIC_API_BASE || "";
-    return `${base}${url}`;
-  }
-
-  // otherwise front public (/bmw.jpg etc)
-  return url;
-}
-
-function fmtLeft(msLeft) {
+function fmtTime(msLeft) {
   const s = Math.max(0, Math.floor(msLeft / 1000));
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
@@ -82,755 +21,783 @@ function haptic(type = "impact", style = "medium") {
   } catch {}
 }
 
-// ✅ tiny “casino” tick sound (WebAudio)
-function playBidTick() {
+function openSubscribe(url) {
+  if (!url) return;
   try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) return;
-
-    const ctx = new AudioCtx();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-
-    o.type = "triangle";
-    o.frequency.value = 820;
-
-    g.gain.value = 0.0001;
-    g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
-
-    o.connect(g);
-    g.connect(ctx.destination);
-
-    o.start();
-    o.stop(ctx.currentTime + 0.13);
-
-    o.onended = () => {
-      try {
-        ctx.close();
-      } catch {}
-    };
+    if (window?.Telegram?.WebApp?.openTelegramLink) {
+      window.Telegram.WebApp.openTelegramLink(url);
+      return;
+    }
   } catch {}
+  window.open(url, "_blank");
 }
 
-function statusBadge(status) {
-  if (status === "LIVE") return { text: "LIVE", bg: "#19c37d" };
-  if (status === "ENDED") return { text: "ЗАВЕРШЕНО", bg: "#7a7a7a" };
-  return { text: "СКОРО", bg: "#808080" };
+function resolveImage(url) {
+  if (!url) return null;
+
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+
+  if (url.startsWith("/uploads/")) {
+    const base = process.env.NEXT_PUBLIC_API_BASE || "";
+    return `${base}${url}`;
+  }
+
+  return url;
 }
 
-function normalizeStatus(s) {
-  if (s === "SCHEDULED") return "SOON";
-  return s;
-}
+export default function LotPage({ params }) {
+  const lotId = params?.id;
 
-export default function HomePage() {
-  const [lots, setLots] = useState([]);
+  const [lot, setLot] = useState(null);
+  const [bids, setBids] = useState([]);
   const [err, setErr] = useState("");
+  const [subscribeUrl, setSubscribeUrl] = useState(null);
 
-  const [query, setQuery] = useState("");
-  const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED | FAV
+  const [me, setMe] = useState({ id: null, name: "Ви" });
 
-  const [favIds, setFavIds] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
-  // ✅ track previous prices safely (no re-renders)
-  const prevPricesRef = useRef({}); // { [lotId]: number }
-  const [flash, setFlash] = useState({}); // { [lotId]: true }
+  const [autoBidMax, setAutoBidMax] = useState("");
+  const [autoBidBusy, setAutoBidBusy] = useState(false);
+  const [myAutoBid, setMyAutoBid] = useState(null);
 
-  // ✅ casino effects
-  const [screenFlash, setScreenFlash] = useState(false);
-  const [soundOn, setSoundOn] = useState(false);
+  const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
-  const [toasts, setToasts] = useState([]); // [{id, text}]
+
+  const [outbid, setOutbid] = useState(false);
+  const outbidTimer = useRef(null);
+
+  const prevRef = useRef({ leaderUserId: null, topBidId: null });
+
+  const isDesktopView = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return !(
+      window?.Telegram?.WebApp?.initData &&
+      window.Telegram.WebApp.initData.length > 0
+    );
+  }, []);
 
   useEffect(() => {
     tgReady();
-    setFavIds(getFavorites());
-    setSoundOn(getSoundEnabled());
+    const u = window?.Telegram?.WebApp?.initDataUnsafe?.user;
+    if (u?.id) {
+      const id = String(u.id);
+      setMe({
+        id,
+        name: u.username ? `@${u.username}` : u.first_name || "Ви",
+      });
+    }
   }, []);
 
-  function pushToast(text) {
-    const id = ++toastId.current;
-    setToasts((t) => [{ id, text }, ...t].slice(0, 3));
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2400);
-  }
-
   useEffect(() => {
+    if (!lotId) return;
     let alive = true;
 
     async function load() {
       try {
-        const r = await apiGet("/lots");
+        const r = await apiGet(`/lots/${lotId}`);
         if (!alive) return;
 
-        if (r?.error) {
-          setErr(String(r.error));
-          setLots([]);
+        if (r?.error === "NOT_SUBSCRIBED") {
+          setSubscribeUrl(r.subscribeUrl || null);
+          setErr("NOT_SUBSCRIBED");
+        } else {
+          setSubscribeUrl(null);
+          setErr(r?.error ? String(r.error) : "");
+        }
+
+        const nextLot = r?.lot || null;
+        const nextBids = r?.bids || r?.lot?.bids || [];
+
+        if (!nextLot) {
+          setLot(null);
+          setBids([]);
+          setComments([]);
+          setMyAutoBid(null);
           return;
         }
 
-        setErr("");
-        const raw = Array.isArray(r?.lots) ? r.lots : [];
-        const fixed = raw.map((x) => ({ ...x, status: normalizeStatus(x.status) }));
+        const nextComments = Array.isArray(r?.comments) ? r.comments : [];
+        const nextAutoBids = Array.isArray(r?.autoBids) ? r.autoBids : [];
 
-        // ✅ detect LIVE price changes -> flash + haptic + sound + toast + screen flash
-        const nextFlash = {};
-        let anyLivePriceChange = false;
-        let firstChanged = null;
-
-        for (const l of fixed) {
-          const id = String(l.id);
-          const prev = prevPricesRef.current[id];
-          const cur = Number(l.currentPrice || 0);
-
-          if (normalizeStatus(l.status) === "LIVE" && prev != null && prev !== cur) {
-            nextFlash[id] = true;
-            anyLivePriceChange = true;
-            if (!firstChanged) firstChanged = l;
-          }
-
-          prevPricesRef.current[id] = cur;
+        if (nextComments.length) setComments(nextComments);
+        if (nextAutoBids.length && me?.id) {
+          const mine = nextAutoBids.find(
+            (x) => String(x.userId) === String(me.id) && x.isActive
+          );
+          setMyAutoBid(mine || null);
+          if (mine?.maxAmount != null) setAutoBidMax(String(mine.maxAmount));
+        } else if (me?.id) {
+          setMyAutoBid(null);
         }
 
-        if (Object.keys(nextFlash).length) {
-          setFlash((old) => ({ ...old, ...nextFlash }));
-          setTimeout(() => {
-            setFlash((old) => {
-              const copy = { ...old };
-              for (const k of Object.keys(nextFlash)) delete copy[k];
-              return copy;
-            });
-          }, 650);
+        const newTopBid = nextBids[0] || null;
+        if (newTopBid?.id && newTopBid.id !== prevRef.current.topBidId) {
+          const id = ++toastId.current;
+          const text = `${newTopBid.userName} поставив ₴${newTopBid.amount}`;
+          setToasts((t) => [{ id, text }, ...t].slice(0, 3));
+          setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2200);
+          prevRef.current.topBidId = newTopBid.id;
         }
 
-        if (anyLivePriceChange && tab === "LIVE") {
-          // ✅ haptic + screen flash
+        const prevLeader = prevRef.current.leaderUserId
+          ? String(prevRef.current.leaderUserId)
+          : null;
+        const newLeader = nextLot.leaderUserId ? String(nextLot.leaderUserId) : null;
+
+        if (
+          me?.id &&
+          prevLeader === String(me.id) &&
+          newLeader &&
+          newLeader !== String(me.id)
+        ) {
+          setOutbid(true);
           haptic("notification", "warning");
           haptic("impact", "heavy");
 
-          setScreenFlash(true);
-          setTimeout(() => setScreenFlash(false), 180);
-
-          // ✅ sound (if enabled)
-          if (soundOn) playBidTick();
-
-          // ✅ toast
-          if (firstChanged?.title) {
-            pushToast(`⚡️ Нова ставка: ${firstChanged.title} — ₴${firstChanged.currentPrice}`);
-          } else {
-            pushToast("⚡️ Нова ставка в LIVE!");
-          }
+          if (outbidTimer.current) clearTimeout(outbidTimer.current);
+          outbidTimer.current = setTimeout(() => setOutbid(false), 2500);
         }
 
-        setLots(fixed);
+        prevRef.current.leaderUserId = nextLot.leaderUserId || null;
+
+        setLot(nextLot);
+        setBids(nextBids);
+
+        if (
+          (!nextComments || nextComments.length === 0) &&
+          comments.length === 0 &&
+          err !== "NOT_SUBSCRIBED"
+        ) {
+          try {
+            const c = await apiGet(`/lots/${lotId}/comments?take=50`);
+            if (Array.isArray(c?.comments)) setComments(c.comments);
+          } catch {}
+        }
       } catch {
         setErr("Помилка з’єднання (API).");
       }
     }
 
     load();
-    const t = setInterval(load, 2500);
+    const t = setInterval(load, 1000);
+
     return () => {
       alive = false;
       clearInterval(t);
     };
-  }, [tab, soundOn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lotId, me?.id]);
 
-  // ✅ mini timers on cards
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    const t = setInterval(() => setTick((x) => x + 1), 250);
     return () => clearInterval(t);
   }, []);
 
-  const counts = useMemo(() => {
-    const c = { LIVE: 0, SOON: 0, ENDED: 0 };
-    for (const l of lots) {
-      const st = normalizeStatus(l.status);
-      if (c[st] !== undefined) c[st]++;
+  const msLeft = useMemo(() => {
+    if (!lot?.endsAt) return 0;
+    return new Date(lot.endsAt).getTime() - Date.now();
+  }, [lot?.endsAt, tick]);
+
+  const timeLeft = useMemo(() => fmtTime(msLeft), [msLeft]);
+  const isHot = msLeft <= 10_000;
+
+  const myLeading = useMemo(() => {
+    if (!lot?.leaderUserId || !me?.id) return false;
+    return String(lot.leaderUserId) === String(me.id);
+  }, [lot?.leaderUserId, me?.id]);
+
+  const statusLabel = useMemo(() => {
+    if (!lot) return "";
+    if (lot.status === "ENDED") return "АУКЦІОН ЗАВЕРШЕНО";
+    if (lot.status !== "LIVE") return "СКОРО СТАРТ";
+    return myLeading ? "ВИ ВЕДЕТЕ" : "ЙДЕ БОРОТЬБА";
+  }, [lot, myLeading]);
+
+  const statusColor = useMemo(() => {
+    if (!lot) return "#777";
+    if (lot.status === "ENDED") return "#999";
+    if (lot.status !== "LIVE") return "#777";
+    return myLeading ? "#19c37d" : "#ff4d4d";
+  }, [lot, myLeading]);
+
+  async function bid(amount) {
+    setErr("");
+    const r = await apiPost(`/lots/${lotId}/bid`, { amount });
+
+    if (r?.error === "NOT_SUBSCRIBED") {
+      setSubscribeUrl(r.subscribeUrl || null);
+      setErr("NOT_SUBSCRIBED");
+      return;
     }
-    return c;
-  }, [lots]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const favSet = new Set(favIds.map(String));
-
-    let arr = lots;
-
-    if (tab === "FAV") {
-      arr = arr.filter((l) => favSet.has(String(l.id)));
-    } else {
-      arr = arr.filter((l) => normalizeStatus(l.status) === tab);
+    if (r?.error) {
+      if (String(r.error).startsWith("MIN_BID_")) {
+        const min = String(r.error).replace("MIN_BID_", "");
+        setErr(`Мінімальна наступна ставка: ₴${min}`);
+      } else if (r.error === "BID_REQUIRES_TELEGRAM") {
+        setErr("Ставки доступні лише з телефону в Telegram (Mini App).");
+      } else {
+        setErr(`Помилка: ${r.error}`);
+      }
+      return;
     }
 
-    if (q) {
-      arr = arr.filter((l) => String(l.title || "").toLowerCase().includes(q));
+    haptic("notification", "success");
+    haptic("impact", "medium");
+  }
+
+  const nextMin = useMemo(() => {
+    if (!lot) return 0;
+    return Number(lot.currentPrice || 0) + Number(lot.bidStep || 0);
+  }, [lot]);
+
+  function quickBid(extra) {
+    bid(nextMin + Number(extra || 0));
+  }
+
+  const showSubscribe = err === "NOT_SUBSCRIBED";
+  const imgSrc = resolveImage(lot?.imageUrl);
+
+  async function submitComment() {
+    const text = String(commentText || "").trim();
+    if (!text) return;
+
+    setCommentBusy(true);
+    try {
+      const r = await apiPost(`/lots/${lotId}/comment`, { text });
+
+      if (r?.error === "NOT_SUBSCRIBED") {
+        setSubscribeUrl(r.subscribeUrl || null);
+        setErr("NOT_SUBSCRIBED");
+        return;
+      }
+
+      if (r?.error) {
+        setErr(`Помилка: ${r.error}`);
+        return;
+      }
+
+      const c = r?.comment;
+      if (c?.id) {
+        setComments((prev) => [c, ...prev].slice(0, 100));
+        setCommentText("");
+        haptic("impact", "light");
+      }
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
+  async function enableAutoBid() {
+    const max = Math.trunc(Number(autoBidMax));
+    if (!Number.isFinite(max) || max <= 0) {
+      setErr("Вкажи max суму для автобіду (наприклад 500).");
+      return;
     }
 
-    // sort
-    arr.sort((a, b) => {
-      const aEnd = a?.endsAt ? new Date(a.endsAt).getTime() : 0;
-      const bEnd = b?.endsAt ? new Date(b.endsAt).getTime() : 0;
-      const aStart = a?.startsAt ? new Date(a.startsAt).getTime() : 0;
-      const bStart = b?.startsAt ? new Date(b.startsAt).getTime() : 0;
+    setAutoBidBusy(true);
+    try {
+      const r = await apiPost(`/lots/${lotId}/autobid`, { maxAmount: max });
 
-      if (tab === "LIVE" || tab === "FAV") return aEnd - bEnd;
-      if (tab === "SOON") return aStart - bStart;
-      return bEnd - aEnd;
-    });
+      if (r?.error === "NOT_SUBSCRIBED") {
+        setSubscribeUrl(r.subscribeUrl || null);
+        setErr("NOT_SUBSCRIBED");
+        return;
+      }
 
-    return arr;
-  }, [lots, query, tab, favIds]);
+      if (r?.error) {
+        setErr(`Помилка: ${r.error}`);
+        return;
+      }
 
-  const heroText = useMemo(() => {
-    if (tab === "LIVE") return "Зараз йде боротьба — встигни забрати лот";
-    if (tab === "SOON") return "Готуйся — скоро стартує";
-    if (tab === "ENDED") return "Завершені — можна подивитись історію";
-    return "Твої обрані лоти";
-  }, [tab]);
+      const ab = r?.autoBid || null;
+      setMyAutoBid(ab);
+      haptic("notification", "success");
+    } finally {
+      setAutoBidBusy(false);
+    }
+  }
+
+  async function disableAutoBidClient() {
+    setAutoBidBusy(true);
+    try {
+      const r = await apiPost(`/lots/${lotId}/autobid/delete`, {});
+      if (r?.ok) {
+        setMyAutoBid(null);
+        haptic("impact", "medium");
+        return;
+      }
+      if (r?.error) setErr(`Помилка: ${r.error}`);
+    } finally {
+      setAutoBidBusy(false);
+    }
+  }
+
+  if (!lotId) {
+    return (
+      <div style={{ padding: 16, fontFamily: "system-ui", color: "white" }}>
+        <div style={{ fontWeight: 900 }}>Невірний лот</div>
+      </div>
+    );
+  }
+
+  if (!lot) {
+    return (
+      <div style={{ padding: 16, fontFamily: "system-ui", color: "white" }}>
+        <div style={{ fontWeight: 900 }}>Завантаження...</div>
+        {err && (
+          <div style={{ marginTop: 8, color: "#ff4d4d", fontWeight: 700 }}>
+            {String(err)}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        color: "white",
-        background:
-          "radial-gradient(900px 480px at 20% -10%, rgba(62,136,247,0.25), transparent 60%)," +
-          "radial-gradient(700px 420px at 85% 10%, rgba(25,195,125,0.22), transparent 55%)," +
-          "linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.92))," +
-          "url('/bg.jpg')",
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundAttachment: "fixed",
-      }}
-    >
-      {/* Global CSS */}
-      <style>{`
-        .hw-header {
-          position: sticky;
-          top: 0;
-          z-index: 50;
-          background:
-            radial-gradient(1100px 340px at 15% 0%, rgba(62,136,247,0.18), rgba(0,0,0,0) 60%),
-            radial-gradient(900px 320px at 85% 0%, rgba(25,195,125,0.14), rgba(0,0,0,0) 55%),
-            rgba(11,11,11,0.86);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border-bottom: 1px solid rgba(255,255,255,0.10);
-          padding: 14px 16px 12px;
-          text-align: center;
-        }
-        .hw-title {
-          font-weight: 1000;
-          font-size: 18px;
-          letter-spacing: 0.5px;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .hw-live-dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 999px;
-          background: #19c37d;
-          box-shadow: 0 0 0 rgba(25,195,125,0.6);
-          animation: hwPulse 1.05s infinite;
-        }
-        @keyframes hwPulse {
-          0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25,195,125,0.55); }
-          60% { transform: scale(1.05); box-shadow: 0 0 0 11px rgba(25,195,125,0); }
-          100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25,195,125,0); }
-        }
+    <>
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          padding: "12px 14px",
+          background: "#0b0b0b",
+          borderBottom: "1px solid #222",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "white",
+        }}
+      >
+        <Link
+          href="/"
+          style={{
+            position: "absolute",
+            left: 14,
+            textDecoration: "none",
+            color: "white",
+            fontWeight: 900,
+            fontSize: 16,
+          }}
+        >
+          ← Назад
+        </Link>
 
-        .hw-card {
-          transition: transform 140ms ease, box-shadow 180ms ease, border-color 180ms ease;
-          box-shadow: 0 10px 26px rgba(0,0,0,0.25);
-        }
-        .hw-card:active { transform: scale(0.985); }
-        .hw-card:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 14px 34px rgba(0,0,0,0.32);
-          border-color: rgba(255,255,255,0.16);
-        }
-        .hw-chip { border: 1px solid rgba(255,255,255,0.12); background: rgba(17,17,17,0.8); }
-        .hw-tab {
-          border: 1px solid #2c2c2c;
-          background: rgba(17,17,17,0.86);
-          transition: transform 120ms ease, border-color 180ms ease, background 180ms ease;
-        }
-        .hw-tab:active { transform: scale(0.985); }
-        .hw-thumb { border: 1px solid rgba(255,255,255,0.12); background: rgba(10,10,10,0.9); }
+        <div style={{ fontWeight: 900, opacity: 0.85 }}>Усі аукціони</div>
+      </div>
 
-        .hw-flash { animation: hwFlash 650ms ease-out; }
-        @keyframes hwFlash {
-          0% { box-shadow: 0 0 0 rgba(255,255,255,0), 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
-          35% { box-shadow: 0 0 22px rgba(62,136,247,0.28), 0 16px 40px rgba(0,0,0,0.35); border-color: rgba(62,136,247,0.32); }
-          100% { box-shadow: 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
-        }
+      {showSubscribe && (
+        <div
+          style={{
+            margin: "10px 14px 0",
+            padding: "12px",
+            background: "#1a1111",
+            border: "1px solid #3a1f1f",
+            borderRadius: 12,
+            color: "white",
+          }}
+        >
+          <div style={{ fontWeight: 900, fontSize: 16 }}>
+            Щоб робити ставки — потрібна підписка на канал
+          </div>
+          <div style={{ marginTop: 6, opacity: 0.8, fontSize: 13 }}>
+            Підпишись і повернись сюди — все запрацює.
+          </div>
 
-        .hw-price-pop { animation: hwPricePop 520ms ease-out; }
-        @keyframes hwPricePop {
-          0% { transform: translateY(0); filter: brightness(1); }
-          35% { transform: translateY(-1px) scale(1.03); filter: brightness(1.22); }
-          100% { transform: translateY(0) scale(1); filter: brightness(1); }
-        }
+          <button
+            onClick={() => openSubscribe(subscribeUrl)}
+            style={{
+              marginTop: 10,
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #333",
+              fontWeight: 900,
+              background: "#3e88f7",
+              color: "white",
+            }}
+          >
+            ПІДПИСАТИСЬ
+          </button>
 
-        .hw-mini-timer {
-          margin-top: 6px;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 11px;
-          font-weight: 900;
-          opacity: 0.92;
-          padding: 4px 8px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(0,0,0,0.35);
-        }
-        .hw-mini-timer.hot {
-          border-color: rgba(255,77,77,0.28);
-          background: rgba(255,77,77,0.14);
-          animation: hwBlink 0.95s infinite;
-        }
-        @keyframes hwBlink {
-          0% { transform: scale(1); opacity: 1; }
-          50% { transform: scale(1.035); opacity: 0.78; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        .hw-hot-pill {
-          margin-left: 8px;
-          font-size: 10px;
-          font-weight: 1000;
-          padding: 3px 7px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,77,77,0.28);
-          background: rgba(255,77,77,0.14);
-        }
-
-        /* ✅ LIVE badge pulse too */
-        .hw-badge-live {
-          animation: hwBadgePulse 1.05s infinite;
-          transform-origin: center;
-        }
-        @keyframes hwBadgePulse {
-          0% { transform: scale(1); filter: brightness(1); box-shadow: 0 0 0 rgba(25,195,125,0); }
-          55% { transform: scale(1.04); filter: brightness(1.12); box-shadow: 0 0 18px rgba(25,195,125,0.25); }
-          100% { transform: scale(1); filter: brightness(1); box-shadow: 0 0 0 rgba(25,195,125,0); }
-        }
-
-        /* ✅ Screen flash on new bid */
-        .hw-screen-flash {
-          position: fixed;
-          inset: 0;
-          pointer-events: none;
-          z-index: 80;
-          background:
-            radial-gradient(900px 340px at 50% 30%, rgba(62,136,247,0.18), transparent 60%),
-            radial-gradient(850px 340px at 50% 65%, rgba(25,195,125,0.12), transparent 55%),
-            rgba(255,255,255,0.04);
-          opacity: 0;
-          transform: translateZ(0);
-        }
-        .hw-screen-flash.on { animation: hwScreenFlash 180ms ease-out; }
-        @keyframes hwScreenFlash {
-          0% { opacity: 0; }
-          35% { opacity: 1; }
-          100% { opacity: 0; }
-        }
-
-        /* ✅ Toasts */
-        .hw-toasts {
-          position: fixed;
-          left: 12px;
-          right: 12px;
-          top: 76px;
-          z-index: 90;
-          display: grid;
-          gap: 8px;
-          pointer-events: none;
-        }
-        .hw-toast {
-          max-width: 520px;
-          margin: 0 auto;
-          padding: 10px 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(0,0,0,0.70);
-          backdrop-filter: blur(8px);
-          font-weight: 900;
-          font-size: 12px;
-          animation: hwToastIn 240ms ease-out;
-        }
-        @keyframes hwToastIn {
-          0% { transform: translateY(-6px); opacity: 0; }
-          100% { transform: translateY(0); opacity: 1; }
-        }
-
-        /* ✅ Sound toggle pill */
-        .hw-sound {
-          border: 1px solid rgba(255,255,255,0.14);
-          background: rgba(0,0,0,0.32);
-          color: white;
-          font-weight: 1000;
-          font-size: 12px;
-          padding: 7px 10px;
-          border-radius: 999px;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .hw-sound:active { transform: scale(0.985); }
-
-        @media (prefers-reduced-motion: reduce) {
-          .hw-live-dot, .hw-badge-live, .hw-mini-timer.hot, .hw-flash, .hw-screen-flash.on { animation: none !important; }
-        }
-      `}</style>
-
-      {/* ✅ Screen flash */}
-      <div className={`hw-screen-flash ${screenFlash ? "on" : ""}`} />
-
-      {/* ✅ Toasts */}
-      {toasts.length > 0 && (
-        <div className="hw-toasts" aria-live="polite" aria-atomic="true">
-          {toasts.map((t) => (
-            <div key={t.id} className="hw-toast">
-              {t.text}
-            </div>
-          ))}
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #333",
+              fontWeight: 900,
+              background: "#111",
+              color: "white",
+            }}
+          >
+            Я ВЖЕ ПІДПИСАВСЯ — ОНОВИТИ
+          </button>
         </div>
       )}
 
-      {/* Header */}
-      <div className="hw-header">
-        <div className="hw-title">
-          <span className="hw-live-dot" />
-          <span>ГОЛОВНА</span>
-        </div>
-
-        <div style={{ marginTop: 6, display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ opacity: 0.75, fontWeight: 800, fontSize: 12 }}>HW HUNTER AUCTION</div>
-
-          <button
-            className="hw-sound"
-            onClick={() => {
-              const next = !soundOn;
-              setSoundOn(next);
-              setSoundEnabled(next);
-              // quick feedback
-              haptic("impact", "light");
-              if (next) playBidTick();
-              pushToast(next ? "🔊 Звук увімкнено" : "🔇 Звук вимкнено");
-            }}
-            type="button"
-          >
-            <span style={{ opacity: 0.9 }}>{soundOn ? "🔊" : "🔇"}</span>
-            <span>{soundOn ? "Sound ON" : "Sound OFF"}</span>
-          </button>
-        </div>
-
-        {/* Search */}
-        <div style={{ marginTop: 12 }}>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Пошук лота..."
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(17,17,17,0.9)",
-              color: "white",
-              fontWeight: 800,
-              outline: "none",
-            }}
-          />
-        </div>
-
-        {/* Tabs */}
+      <div
+        style={{
+          padding: 14,
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto",
+          color: "white",
+        }}
+      >
         <div
           style={{
-            marginTop: 10,
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr 1fr",
-            gap: 8,
-          }}
-        >
-          <button
-            onClick={() => setTab("LIVE")}
-            className="hw-tab"
-            style={{
-              padding: "10px 10px",
-              borderRadius: 12,
-              color: "white",
-              fontWeight: 1000,
-              background: tab === "LIVE" ? "rgba(25,195,125,0.18)" : undefined,
-            }}
-            type="button"
-          >
-            LIVE ({counts.LIVE})
-          </button>
-
-          <button
-            onClick={() => setTab("SOON")}
-            className="hw-tab"
-            style={{
-              padding: "10px 10px",
-              borderRadius: 12,
-              color: "white",
-              fontWeight: 1000,
-              background: tab === "SOON" ? "rgba(160,160,160,0.16)" : undefined,
-            }}
-            type="button"
-          >
-            СКОРО ({counts.SOON})
-          </button>
-
-          <button
-            onClick={() => setTab("ENDED")}
-            className="hw-tab"
-            style={{
-              padding: "10px 10px",
-              borderRadius: 12,
-              color: "white",
-              fontWeight: 1000,
-              background: tab === "ENDED" ? "rgba(160,160,160,0.16)" : undefined,
-            }}
-            type="button"
-          >
-            ЗАВЕРШ. ({counts.ENDED})
-          </button>
-
-          <button
-            onClick={() => setTab("FAV")}
-            className="hw-tab"
-            style={{
-              padding: "10px 10px",
-              borderRadius: 12,
-              color: "white",
-              fontWeight: 1000,
-              background: tab === "FAV" ? "rgba(62,136,247,0.18)" : undefined,
-            }}
-            type="button"
-          >
-            ⭐ Обране ({favIds.length})
-          </button>
-        </div>
-      </div>
-
-      <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
-        {/* Hero / hype bar */}
-        <div
-          className="hw-chip"
-          style={{
-            borderRadius: 16,
-            padding: "12px 12px",
             display: "flex",
-            alignItems: "center",
             justifyContent: "space-between",
+            alignItems: "center",
             gap: 10,
           }}
         >
-          <div style={{ fontWeight: 1000, lineHeight: 1.25 }}>
-            {heroText}
-            <div style={{ marginTop: 4, opacity: 0.75, fontWeight: 800, fontSize: 12 }}>
-              {tab === "LIVE"
-                ? "Тисни на лот, роби ставку — і тримай темп."
-                : "Перемикай вкладки та додавай в ⭐ обране."}
-            </div>
-          </div>
-
+          <div style={{ fontWeight: 900, fontSize: 18 }}>{lot.title}</div>
           <div
             style={{
-              flexShrink: 0,
-              padding: "8px 10px",
+              padding: "6px 10px",
               borderRadius: 999,
-              border: "1px solid rgba(255,255,255,0.14)",
-              background: tab === "LIVE" ? "rgba(25,195,125,0.18)" : "rgba(62,136,247,0.14)",
-              fontWeight: 1000,
+              background: statusColor,
+              color: "white",
+              fontWeight: 800,
               fontSize: 12,
               whiteSpace: "nowrap",
             }}
           >
-            {tab === "FAV" ? `⭐ ${favIds.length}` : `${filtered.length} лот(ів)`}
+            {statusLabel}
           </div>
         </div>
 
-        {err && (
+        <div style={{ position: "relative", marginTop: 10 }}>
+          <img
+            src={imgSrc || "/placeholder.jpg"}
+            alt={lot.title}
+            style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
+          />
+
+          <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 8 }}>
+            {toasts.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  background: "rgba(0,0,0,0.65)",
+                  color: "white",
+                  padding: "8px 10px",
+                  borderRadius: 12,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  maxWidth: 260,
+                }}
+              >
+                {t.text}
+              </div>
+            ))}
+          </div>
+
+          {outbid && (
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "55%",
+                transform: "translate(-50%, -50%)",
+                background: "rgba(255, 0, 0, 0.85)",
+                color: "white",
+                padding: "12px 14px",
+                borderRadius: 14,
+                fontWeight: 1000,
+                fontSize: 16,
+                letterSpacing: 1,
+                border: "1px solid rgba(255,255,255,0.25)",
+              }}
+            >
+              ТЕБЕ ПЕРЕБИЛИ
+            </div>
+          )}
+
           <div
             style={{
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 14,
-              border: "1px solid rgba(255,90,90,0.25)",
-              background: "rgba(70,20,20,0.55)",
+              position: "absolute",
+              right: 10,
+              top: 10,
+              background: isHot ? "rgba(255,0,0,0.85)" : "rgba(0,0,0,0.65)",
               color: "white",
+              padding: "10px 12px",
+              borderRadius: 14,
+              fontWeight: 900,
+              fontSize: 18,
+              letterSpacing: 1,
+            }}
+          >
+            {timeLeft}
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: 12,
+            display: "grid",
+            gap: 6,
+            border: "1px solid #2c2c2c",
+            borderRadius: 14,
+            padding: 12,
+            background: "#0f0f0f",
+            color: "white",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ opacity: 0.8 }}>Поточна ставка</div>
+            <div style={{ fontWeight: 900, fontSize: 18 }}>₴{lot.currentPrice}</div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ opacity: 0.8 }}>Мін. наступна</div>
+            <div style={{ fontWeight: 900 }}>₴{nextMin}</div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ opacity: 0.8 }}>Крок</div>
+            <div style={{ fontWeight: 900 }}>₴{lot.bidStep}</div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 10,
+            marginTop: 12,
+          }}
+        >
+          <button
+            onClick={() => quickBid(10)}
+            disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
+            style={{
+              padding: "12px 10px",
+              borderRadius: 14,
+              border: "1px solid #333",
               fontWeight: 900,
             }}
           >
-            {err}
+            +₴10
+          </button>
+          <button
+            onClick={() => quickBid(20)}
+            disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
+            style={{
+              padding: "12px 10px",
+              borderRadius: 14,
+              border: "1px solid #333",
+              fontWeight: 900,
+            }}
+          >
+            +₴20
+          </button>
+          <button
+            onClick={() => quickBid(50)}
+            disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
+            style={{
+              padding: "12px 10px",
+              borderRadius: 14,
+              border: "1px solid #333",
+              fontWeight: 900,
+            }}
+          >
+            +₴50
+          </button>
+        </div>
+
+        <button
+          onClick={() => bid(nextMin)}
+          disabled={lot.status !== "LIVE" || isDesktopView || showSubscribe}
+          style={{
+            marginTop: 10,
+            width: "100%",
+            padding: "14px 12px",
+            borderRadius: 14,
+            border: "1px solid #333",
+            fontWeight: 1000,
+            fontSize: 16,
+          }}
+        >
+          ЗРОБИТИ СТАВКУ ₴{nextMin}
+        </button>
+
+        {err && err !== "NOT_SUBSCRIBED" && (
+          <div style={{ marginTop: 10, color: "#ff4d4d", fontWeight: 700 }}>
+            {String(err)}
           </div>
         )}
 
-        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-          {filtered.map((l) => {
-            const img = resolveImage(l.imageUrl);
-            const badge = statusBadge(normalizeStatus(l.status));
-            const isFav = favIds.includes(String(l.id));
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Автобід</div>
 
-            const endAtMs = l?.endsAt ? new Date(l.endsAt).getTime() : 0;
-            const msLeft = endAtMs ? endAtMs - Date.now() : 0;
-            const timerText =
-              normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
+          <div
+            style={{
+              border: "1px solid #2c2c2c",
+              borderRadius: 14,
+              padding: 12,
+              background: "#0f0f0f",
+            }}
+          >
+            <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.35 }}>
+              Автобід буде підвищувати ставку за тебе до максимального ліміту.
+            </div>
 
-            const endingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 120_000;
-
-            const badgeText =
-              badge.text === "LIVE" ? "LIVE" : badge.text === "ЗАВЕРШЕНО" ? "ЗАВЕРШЕНО" : "СКОРО";
-
-            const isFlashing = !!flash[String(l.id)];
-
-            return (
-              <Link
-                key={l.id}
-                href={`/lot/${l.id}`}
-                className={`hw-card ${isFlashing ? "hw-flash" : ""}`}
+            <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+              <input
+                value={autoBidMax}
+                onChange={(e) => setAutoBidMax(e.target.value)}
+                inputMode="numeric"
+                placeholder="Max сума, напр 500"
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "72px 1fr 44px auto",
-                  gap: 12,
-                  alignItems: "center",
-                  padding: 12,
-                  borderRadius: 16,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background:
-                    "linear-gradient(180deg, rgba(20,20,20,0.92), rgba(12,12,12,0.92))",
+                  flex: 1,
+                  padding: "12px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #2c2c2c",
+                  background: "rgba(17,17,17,0.9)",
                   color: "white",
-                  textDecoration: "none",
+                  fontWeight: 900,
+                  outline: "none",
+                }}
+              />
+
+              {!myAutoBid ? (
+                <button
+                  onClick={enableAutoBid}
+                  disabled={autoBidBusy || showSubscribe}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #333",
+                    fontWeight: 1000,
+                    background: "#19c37d",
+                    color: "white",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Увімкнути
+                </button>
+              ) : (
+                <button
+                  onClick={disableAutoBidClient}
+                  disabled={autoBidBusy || showSubscribe}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #333",
+                    fontWeight: 1000,
+                    background: "#333",
+                    color: "white",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Вимкнути
+                </button>
+              )}
+            </div>
+
+            {myAutoBid && (
+              <div style={{ marginTop: 8, fontWeight: 900, fontSize: 12, opacity: 0.9 }}>
+                ✅ Увімкнено: max ₴{myAutoBid.maxAmount}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Історія ставок</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {bids.map((b) => (
+              <div
+                key={b.id}
+                style={{
+                  border: "1px solid #2c2c2c",
+                  borderRadius: 14,
+                  padding: 10,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
                 }}
               >
-                {/* thumbnail */}
-                <div
-                  className="hw-thumb"
-                  style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: 14,
-                    overflow: "hidden",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {img ? (
-                    <img
-                      src={img}
-                      alt={l.title}
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 900 }}>NO IMG</div>
-                  )}
-                </div>
-
-                {/* title + price */}
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontWeight: 1000,
-                      fontSize: 14,
-                      lineHeight: 1.2,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {l.title}
-                  </div>
-
-                  <div style={{ marginTop: 6, opacity: 0.92, fontWeight: 1000 }}>
-                    <span className={isFlashing ? "hw-price-pop" : ""}>₴{l.currentPrice}</span>
-                    <span style={{ opacity: 0.65, fontWeight: 800 }}> / крок ₴{l.bidStep}</span>
-                  </div>
-
-                  {timerText && (
-                    <div className={`hw-mini-timer ${endingSoon ? "hot" : ""}`}>
-                      ⏱ {timerText}
-                      {endingSoon && <span className="hw-hot-pill">🔥 HOT</span>}
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: 6, fontSize: 11, opacity: 0.7, fontWeight: 800 }}>
-                    {normalizeStatus(l.status) === "LIVE" && timerText
-                      ? `Залишилось: ${timerText}`
-                      : l.endsAt
-                        ? `Завершення: ${new Date(l.endsAt).toLocaleString()}`
-                        : ""}
-                  </div>
-                </div>
-
-                {/* ⭐ favorite */}
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const next = toggleFavorite(l.id);
-                    setFavIds(next);
-                    haptic("impact", "light");
-                  }}
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    background: isFav ? "rgba(62,136,247,0.18)" : "rgba(17,17,17,0.88)",
-                    color: "white",
-                    fontWeight: 1000,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                  aria-label="favorite"
-                  title="Обране"
-                  type="button"
-                >
-                  {isFav ? "⭐" : "☆"}
-                </button>
-
-                {/* badge */}
-                <div
-                  className={badgeText === "LIVE" ? "hw-badge-live" : ""}
-                  style={{
-                    padding: "7px 10px",
-                    borderRadius: 999,
-                    background: badge.bg,
-                    fontWeight: 1000,
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                    border: "1px solid rgba(255,255,255,0.14)",
-                  }}
-                >
-                  {badgeText}
-                </div>
-              </Link>
-            );
-          })}
-
-          {filtered.length === 0 && !err && (
-            <div style={{ opacity: 0.75, fontWeight: 900, textAlign: "center", marginTop: 18 }}>
-              {tab === "FAV" ? "Немає обраних лотів" : "Нічого не знайдено"}
-            </div>
-          )}
+                <div style={{ fontWeight: 800 }}>{b.userName}</div>
+                <div style={{ fontWeight: 1000 }}>₴{b.amount}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div style={{ marginTop: 18, opacity: 0.65, fontSize: 12, fontWeight: 800, textAlign: "center" }}>
-          Порада: додай лоти в ⭐, щоб швидко стежити за боротьбою.
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>Коментарі</div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <input
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder="Напиши коментар…"
+              style={{
+                flex: 1,
+                padding: "12px 12px",
+                borderRadius: 12,
+                border: "1px solid #2c2c2c",
+                background: "rgba(17,17,17,0.9)",
+                color: "white",
+                fontWeight: 800,
+                outline: "none",
+              }}
+              disabled={showSubscribe}
+            />
+            <button
+              onClick={submitComment}
+              disabled={commentBusy || !commentText.trim() || showSubscribe}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid #333",
+                fontWeight: 1000,
+                background: "#3e88f7",
+                color: "white",
+              }}
+            >
+              Надіслати
+            </button>
+          </div>
+
+          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+            {(comments || []).slice(0, 50).map((c) => (
+              <div
+                key={c.id}
+                style={{
+                  border: "1px solid #2c2c2c",
+                  borderRadius: 14,
+                  padding: 10,
+                  background: "rgba(15,15,15,0.92)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ fontWeight: 900 }}>{c.userName}</div>
+                  <div style={{ fontSize: 11, opacity: 0.65 }}>
+                    {c.createdAt ? new Date(c.createdAt).toLocaleString() : ""}
+                  </div>
+                </div>
+                <div style={{ marginTop: 6, opacity: 0.9, fontWeight: 700, lineHeight: 1.35 }}>
+                  {c.text}
+                </div>
+              </div>
+            ))}
+
+            {(!comments || comments.length === 0) && (
+              <div style={{ opacity: 0.7, fontWeight: 800 }}>
+                Поки що немає коментарів
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
