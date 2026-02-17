@@ -257,21 +257,30 @@ export default function HomePage() {
           border-radius: 999px;
           background: #19c37d;
           box-shadow: 0 0 0 rgba(25,195,125,0.6);
-          animation: hwPulse 1.3s infinite;
+          animation: hwPulse 1.1s infinite;
         }
         @keyframes hwPulse {
-          0% { box-shadow: 0 0 0 0 rgba(25,195,125,0.55); }
-          70% { box-shadow: 0 0 0 10px rgba(25,195,125,0); }
-          100% { box-shadow: 0 0 0 0 rgba(25,195,125,0); }
+          0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25,195,125,0.55); }
+          60% { transform: scale(1.05); box-shadow: 0 0 0 11px rgba(25,195,125,0); }
+          100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(25,195,125,0); }
         }
+
         .hw-card {
           transition: transform 140ms ease, box-shadow 180ms ease, border-color 180ms ease;
           box-shadow: 0 10px 26px rgba(0,0,0,0.25);
         }
         .hw-card:active { transform: scale(0.985); }
-        .hw-card:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(0,0,0,0.32); border-color: rgba(255,255,255,0.16); }
+        .hw-card:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 14px 34px rgba(0,0,0,0.32);
+          border-color: rgba(255,255,255,0.16);
+        }
         .hw-chip { border: 1px solid rgba(255,255,255,0.12); background: rgba(17,17,17,0.8); }
-        .hw-tab { border: 1px solid #2c2c2c; background: rgba(17,17,17,0.86); transition: transform 120ms ease, border-color 180ms ease, background 180ms ease; }
+        .hw-tab {
+          border: 1px solid #2c2c2c;
+          background: rgba(17,17,17,0.86);
+          transition: transform 120ms ease, border-color 180ms ease, background 180ms ease;
+        }
         .hw-tab:active { transform: scale(0.985); }
         .hw-thumb { border: 1px solid rgba(255,255,255,0.12); background: rgba(10,10,10,0.9); }
 
@@ -313,6 +322,21 @@ export default function HomePage() {
           border-radius: 999px;
           border: 1px solid rgba(255,77,77,0.28);
           background: rgba(255,77,77,0.14);
+        }
+
+        /* ✅ make LIVE badge pulse too */
+        .hw-badge-live {
+          animation: hwBadgePulse 1.1s infinite;
+          transform-origin: center;
+        }
+        @keyframes hwBadgePulse {
+          0% { transform: scale(1); filter: brightness(1); box-shadow: 0 0 0 rgba(25,195,125,0); }
+          55% { transform: scale(1.04); filter: brightness(1.12); box-shadow: 0 0 18px rgba(25,195,125,0.25); }
+          100% { transform: scale(1); filter: brightness(1); box-shadow: 0 0 0 rgba(25,195,125,0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .hw-live-dot, .hw-badge-live, .hw-mini-timer.hot, .hw-flash { animation: none !important; }
         }
       `}</style>
 
@@ -474,13 +498,11 @@ export default function HomePage() {
 
             const endAtMs = l?.endsAt ? new Date(l.endsAt).getTime() : 0;
             const msLeft = endAtMs ? endAtMs - Date.now() : 0;
-            const timerText =
-              normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
+            const timerText = normalizeStatus(l.status) === "LIVE" ? fmtLeft(msLeft + (tick ? 0 : 0)) : null;
 
             const endingSoon = normalizeStatus(l.status) === "LIVE" && msLeft <= 120_000;
 
-            const badgeText =
-              badge.text === "LIVE" ? "LIVE" : badge.text === "ЗАВЕРШЕНО" ? "ЗАВЕРШЕНО" : "СКОРО";
+            const badgeText = badge.text === "LIVE" ? "LIVE" : badge.text === "ЗАВЕРШЕНО" ? "ЗАВЕРШЕНО" : "СКОРО";
 
             return (
               <Link
@@ -495,8 +517,7 @@ export default function HomePage() {
                   padding: 12,
                   borderRadius: 16,
                   border: "1px solid rgba(255,255,255,0.10)",
-                  background:
-                    "linear-gradient(180deg, rgba(20,20,20,0.92), rgba(12,12,12,0.92))",
+                  background: "linear-gradient(180deg, rgba(20,20,20,0.92), rgba(12,12,12,0.92))",
                   color: "white",
                   textDecoration: "none",
                 }}
@@ -554,8 +575,7 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  {/* subtle time info */}
-                  <div style={{ marginTop: 6, fontSize: 11, opacity: 0.70, fontWeight: 800 }}>
+                  <div style={{ marginTop: 6, fontSize: 11, opacity: 0.7, fontWeight: 800 }}>
                     {normalizeStatus(l.status) === "LIVE" && timerText
                       ? `Залишилось: ${timerText}`
                       : l.endsAt
@@ -592,6 +612,7 @@ export default function HomePage() {
 
                 {/* badge */}
                 <div
+                  className={badgeText === "LIVE" ? "hw-badge-live" : ""}
                   style={{
                     padding: "7px 10px",
                     borderRadius: 999,
@@ -615,7 +636,6 @@ export default function HomePage() {
           )}
         </div>
 
-        {/* Footer hint */}
         <div style={{ marginTop: 18, opacity: 0.65, fontSize: 12, fontWeight: 800, textAlign: "center" }}>
           Порада: додай лоти в ⭐, щоб швидко стежити за боротьбою.
         </div>
