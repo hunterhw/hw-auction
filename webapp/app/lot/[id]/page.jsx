@@ -35,15 +35,24 @@ function openSubscribe(url) {
 function resolveImage(url) {
   if (!url) return null;
 
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  // полный URL
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
 
+  // uploads с бэка
   if (url.startsWith("/uploads/")) {
-    const base = process.env.NEXT_PUBLIC_API_BASE || "";
+    const base =
+      process.env.NEXT_PUBLIC_API_BASE ||
+      "https://hw-auction-backend.onrender.com"; // ← твой backend
+
     return `${base}${url}`;
   }
 
+  // локальные public картинки
   return url;
 }
+
 
 export default function LotPage({ params }) {
   const lotId = params.id;
