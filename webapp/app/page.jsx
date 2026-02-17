@@ -41,15 +41,20 @@ function resolveImage(url) {
   if (!url) return null;
 
   // полный URL
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
 
-  // uploads с бэка (например: /uploads/xxx.jpg)
+  // uploads с бэка
   if (url.startsWith("/uploads/")) {
-    const base = process.env.NEXT_PUBLIC_API_BASE || "";
+    const base =
+      process.env.NEXT_PUBLIC_API_BASE ||
+      "https://hw-auction-backend.onrender.com"; // ← твой backend
+
     return `${base}${url}`;
   }
 
-  // все остальное (/bmw-sth.jpg) — это фронт (public)
+  // локальные public картинки
   return url;
 }
 
