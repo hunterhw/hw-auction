@@ -89,6 +89,8 @@ export default function HomePage() {
   const [tab, setTab] = useState("LIVE"); // LIVE | SOON | ENDED | FAV
 
   const [favIds, setFavIds] = useState([]);
+   const [flash, setFlash] = useState({}); // { [lotId]: true }
+   const prevPriceRef = useMemo(() => ({ map: {} }), []); // simple stable object
 
   useEffect(() => {
     tgReady();
@@ -109,8 +111,44 @@ export default function HomePage() {
 
         setErr("");
         const raw = Array.isArray(r?.lots) ? r.lots : [];
-        const fixed = raw.map((x) => ({ ...x, status: normalizeStatus(x.status) }));
-        setLots(fixed);
+       const fixed = raw.map((x) => ({ ...x, status: normalizeStatus(x.status) }));
+
+// ✅ detect price changes (new bids) -> flash + haptic
+const nextFlash = {};
+let anyLivePriceChange = false;
+
+for (const l of fixed) {
+  const id = String(l.id);
+  const prev = prevPriceRef.map[id];
+  const cur = Number(l.currentPrice || 0);
+
+  // only for LIVE lots
+  if (normalizeStatus(l.status) === "LIVE" && prev != null && prev !== cur) {
+    nextFlash[id] = true;
+    anyLivePriceChange = true;
+  }
+  prevPriceRef.map[id] = cur;
+}
+
+if (Object.keys(nextFlash).length) {
+  setFlash((old) => ({ ...old, ...nextFlash }));
+  // clear flashes after short time
+  setTimeout(() => {
+    setFlash((old) => {
+      const copy = { ...old };
+      for (const k of Object.keys(nextFlash)) delete copy[k];
+      return copy;
+    });
+  }, 650);
+}
+
+if (anyLivePriceChange && tab === "LIVE") {
+  haptic("notification", "warning");
+  haptic("impact", "heavy");
+}
+
+setLots(fixed);
+
       } catch {
         setErr("Помилка з’єднання (API).");
       }
@@ -233,6 +271,50 @@ export default function HomePage() {
           border: 1px solid rgba(255,255,255,0.12);
           background: rgba(10,10,10,0.9);
         }
+        .hw-flash {
+  animation: hwFlash 650ms ease-out;
+}
+@keyframes hwFlash {
+  0% { box-shadow: 0 0 0 rgba(255,255,255,0), 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
+  35% { box-shadow: 0 0 22px rgba(62,136,247,0.28), 0 16px 40px rgba(0,0,0,0.35); border-color: rgba(62,136,247,0.32); }
+  100% { box-shadow: 0 10px 26px rgba(0,0,0,0.25); border-color: rgba(255,255,255,0.10); }
+}
+
+.hw-mini-timer {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 900;
+  opacity: 0.9;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.35);
+}
+
+.hw-mini-timer.hot {
+  border-color: rgba(255,77,77,0.28);
+  background: rgba(255,77,77,0.14);
+  animation: hwBlink 1s infinite;
+}
+@keyframes hwBlink {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.03); opacity: 0.75; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.hw-hot-pill {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 1000;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,77,77,0.28);
+  background: rgba(255,77,77,0.14);
+}
+
       `}</style>
 
       {/* Header */}
@@ -406,7 +488,7 @@ export default function HomePage() {
               <Link
                 key={l.id}
                 href={`/lot/${l.id}`}
-                className="hw-card"
+                className={`hw-card ${flash[String(l.id)] ? "hw-flash" : ""}`}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "72px 1fr 44px auto",
@@ -466,6 +548,13 @@ export default function HomePage() {
                     ₴{l.currentPrice}
                     <span style={{ opacity: 0.65, fontWeight: 800 }}> / крок ₴{l.bidStep}</span>
                   </div>
+                   {timerText && (
+  <div className={`hw-mini-timer ${endingSoon ? "hot" : ""}`}>
+    ⏱ {timerText}
+    {endingSoon && <span className="hw-hot-pill">🔥 HOT</span>}
+  </div>
+)}
+
 
                   {/* subtle time info */}
                   <div style={{ marginTop: 6, fontSize: 11, opacity: 0.70, fontWeight: 800 }}>
