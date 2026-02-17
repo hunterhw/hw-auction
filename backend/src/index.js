@@ -102,6 +102,24 @@ async function tgSendMessage(userId, text, extra = {}) {
 }
 
 /* =========================
+   TG NOTIFY THROTTLE ✅
+   - чтобы не спамить людей
+========================= */
+const tgThrottle = new Map();
+
+function canTg(key, ms) {
+  const now = Date.now();
+  const last = tgThrottle.get(key) || 0;
+  if (now - last < ms) return false;
+  tgThrottle.set(key, now);
+  return true;
+}
+
+function lotWebAppUrl(lotId) {
+  return WEBAPP_URL ? `${WEBAPP_URL}/lot/${String(lotId)}` : "";
+}
+
+/* =========================
    HELPERS
 ========================= */
 async function checkSubscription(userId) {
@@ -256,34 +274,121 @@ app.post("/lots/:id/bid", async (req, res) => {
       amount: numAmount,
     });
 
-    // ✅ уведомление "перебили ставку"
+    // ─────────────────────────────────────────
+    // ✅ dopamine notifications (TG)
+    // - outbid: предыдущему лидеру
+    // - leader: текущему (кто поставил)
+    // - финальные секунды: отдельный акцент
+    // ─────────────────────────────────────────
+
+    // ✅ уведомление "перебили ставку" (предыдущему лидеру)
     try {
       const prevId = result?.outbid?.userId ? String(result.outbid.userId) : null;
+      const lotTitle = escHtml(result?.lot?.title || "Лот");
+      const newPrice = escHtml(result?.lot?.currentPrice);
+      const lotUrl = lotWebAppUrl(req.params.id);
+      const endsAtMs = result?.lot?.endsAt ? new Date(result.lot.endsAt).getTime() : 0;
+      const leftSec = endsAtMs ? Math.max(0, Math.ceil((endsAtMs - Date.now()) / 1000)) : null;
 
       if (prevId && prevId !== String(user.id)) {
-        const lotTitle = escHtml(result?.lot?.title || "Лот");
-        const newPrice = escHtml(result?.lot?.currentPrice);
-        const lotUrl = WEBAPP_URL ? `${WEBAPP_URL}/lot/${req.params.id}` : "";
+        const throttleKey = `outbid:${prevId}:${req.params.id}`;
+        if (canTg(throttleKey, 5000)) {
+          const urgency = leftSec != null && leftSec <= 15 ? "🚨" : "⚡️";
+          const leftLine = leftSec != null ? `\n⏳ До кінця: <b>${leftSec}с</b>` : "";
 
-        const msg =
-          `⚡️ Твою ставку перебили!\n` +
-          `<b>${lotTitle}</b>\n` +
-          `Нова ціна: <b>₴${newPrice}</b>\n` +
-          `\nНатисни кнопку нижче 👇`;
+          const msg =
+            `${urgency} Твою ставку перебили!\n` +
+            `<b>${lotTitle}</b>\n` +
+            `Нова ціна: <b>₴${newPrice}</b>${leftLine}\n\n` +
+            `🔥 Забирай лідерство назад — натисни кнопку нижче 👇`;
 
-        const extra = lotUrl
-          ? {
-              reply_markup: {
-                inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl } }]],
-              },
-            }
-          : {};
+          const extra = lotUrl
+            ? {
+                reply_markup: {
+                  inline_keyboard: [[{ text: `${urgency} Відкрити лот`, web_app: { url: lotUrl } }]],
+                },
+              }
+            : {};
 
-        const sent = await tgSendMessage(prevId, msg, extra);
-        if (!sent?.ok) console.log("OUTBID_NOTIFY_FAIL:", sent);
+          const sent = await tgSendMessage(prevId, msg, extra);
+          if (!sent?.ok) console.log("OUTBID_NOTIFY_FAIL:", sent);
+
+          // ✅ лёгкий "пинок" через 8 сек, если лот еще LIVE и лидер не вернулся
+          setTimeout(async () => {
+            try {
+              const fresh = await getLot(req.params.id);
+              if (!fresh || fresh.status !== "LIVE") return;
+              const freshLeader = fresh.leaderUserId ? String(fresh.leaderUserId) : null;
+              if (freshLeader === prevId) return;
+
+              const key2 = `outbid_nudge:${prevId}:${req.params.id}`;
+              if (!canTg(key2, 12000)) return;
+
+              const endsMs2 = fresh?.endsAt ? new Date(fresh.endsAt).getTime() : 0;
+              const left2 = endsMs2 ? Math.max(0, Math.ceil((endsMs2 - Date.now()) / 1000)) : null;
+              const urgency2 = left2 != null && left2 <= 10 ? "🚨" : "👀";
+
+              const msg2 =
+                `${urgency2} Лот ще активний!\n` +
+                `<b>${escHtml(fresh.title || lotTitle)}</b>\n` +
+                `Зараз: <b>₴${escHtml(fresh.currentPrice)}</b>` +
+                (left2 != null ? `\n⏳ Залишилось: <b>${left2}с</b>` : "") +
+                `\n\nСпробуєш ще раз?`;
+
+              const extra2 = lotUrl
+                ? {
+                    reply_markup: {
+                      inline_keyboard: [[{ text: `${urgency2} Відкрити лот`, web_app: { url: lotUrl } }]],
+                    },
+                  }
+                : {};
+
+              await tgSendMessage(prevId, msg2, extra2);
+            } catch {}
+          }, 8000);
+        }
       }
     } catch (e) {
       console.log("OUTBID_NOTIFY_ERROR:", e);
+    }
+
+    // ✅ уведомление лидеру (кто только что поставил)
+    try {
+      const uid = String(user.id);
+      const lot = result?.lot;
+      if (lot && String(lot.leaderUserId || "") === uid) {
+        const key = `leader:${uid}:${req.params.id}`;
+        if (canTg(key, 15000)) {
+          const lotTitle = escHtml(lot.title || "Лот");
+          const price = escHtml(lot.currentPrice);
+          const endsAtMs = lot?.endsAt ? new Date(lot.endsAt).getTime() : 0;
+          const leftSec = endsAtMs ? Math.max(0, Math.ceil((endsAtMs - Date.now()) / 1000)) : null;
+
+          const isFinal = leftSec != null && leftSec <= 10;
+          const badge = isFinal ? "🚨 ФІНАЛ" : "✅ ТИ ЛІДЕР";
+          const leftLine = leftSec != null ? `\n⏳ До кінця: <b>${leftSec}с</b>` : "";
+          const lotUrl = lotWebAppUrl(req.params.id);
+
+          const msg =
+            `${badge}\n` +
+            `<b>${lotTitle}</b>\n` +
+            `Твоя ставка: <b>₴${price}</b>${leftLine}\n\n` +
+            (isFinal ? "Тримайся! Останні секунди 🔥" : "Тримай лідерство 💪");
+
+          const extra = lotUrl
+            ? {
+                reply_markup: {
+                  inline_keyboard: [[{ text: "Відкрити лот", web_app: { url: lotUrl } }]],
+                },
+              }
+            : {};
+
+          const sent = await tgSendMessage(uid, msg, extra);
+          if (!sent?.ok) console.log("LEADER_NOTIFY_FAIL:", sent);
+        }
+      }
+    } catch (e) {
+      console.log("LEADER_NOTIFY_ERROR:", e);
     }
 
     broadcastToLot(req.params.id, {
