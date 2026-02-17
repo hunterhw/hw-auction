@@ -35,24 +35,15 @@ function openSubscribe(url) {
 function resolveImage(url) {
   if (!url) return null;
 
-  // полный URL
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return url;
-  }
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
 
-  // uploads с бэка
   if (url.startsWith("/uploads/")) {
-    const base =
-      process.env.NEXT_PUBLIC_API_BASE ||
-      "https://hw-auction-backend.onrender.com"; // ← твой backend
-
+    const base = process.env.NEXT_PUBLIC_API_BASE || "";
     return `${base}${url}`;
   }
 
-  // локальные public картинки
   return url;
 }
-
 
 export default function LotPage({ params }) {
   const lotId = params.id;
@@ -77,6 +68,10 @@ export default function LotPage({ params }) {
   // UI toasts / outbid overlay
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
+
+  // ✅ extra эмоции: пульс/шайк
+  const [pulseKey, setPulseKey] = useState(0);
+  const [leaderPulse, setLeaderPulse] = useState(false);
 
   const [outbid, setOutbid] = useState(false);
   const outbidTimer = useRef(null);
@@ -147,6 +142,16 @@ export default function LotPage({ params }) {
         // toast when top bid changed
         const newTopBid = nextBids[0] || null;
         if (newTopBid?.id && newTopBid.id !== prevRef.current.topBidId) {
+          // 🔥 пульс картинки на любую новую ставку
+          setPulseKey((x) => x + 1);
+
+          // ✅ если ставка наша — приятный "зелёный" пульс
+          if (me?.id && String(newTopBid.userId || "") === String(me.id)) {
+            setLeaderPulse(true);
+            setTimeout(() => setLeaderPulse(false), 900);
+            haptic("impact", "light");
+          }
+
           const id = ++toastId.current;
           const text = `${newTopBid.userName} поставив ₴${newTopBid.amount}`;
           setToasts((t) => [{ id, text }, ...t].slice(0, 3));
@@ -169,6 +174,9 @@ export default function LotPage({ params }) {
           setOutbid(true);
           haptic("notification", "warning");
           haptic("impact", "heavy");
+
+          // доп. эффект: резкий пульс
+          setPulseKey((x) => x + 1);
 
           if (outbidTimer.current) clearTimeout(outbidTimer.current);
           outbidTimer.current = setTimeout(() => setOutbid(false), 2500);
@@ -225,7 +233,7 @@ export default function LotPage({ params }) {
     if (!lot) return "";
     if (lot.status === "ENDED") return "АУКЦІОН ЗАВЕРШЕНО";
     if (lot.status !== "LIVE") return "СКОРО СТАРТ";
-    return myLeading ? "ВИ ВЕДЕТЕ" : "ЙДЕ БОРОТЬБА";
+    return myLeading ? "👑 ВИ ВЕДЕТЕ" : "ЙДЕ БОРОТЬБА";
   }, [lot, myLeading]);
 
   const statusColor = useMemo(() => {
@@ -365,6 +373,49 @@ export default function LotPage({ params }) {
 
   return (
     <>
+      {/* ✅ micro-animations */}
+      <style jsx global>{`
+        @keyframes hwPulse {
+          0% { transform: scale(1); }
+          35% { transform: scale(1.015); }
+          100% { transform: scale(1); }
+        }
+        @keyframes hwShake {
+          0% { transform: translate(-50%, -50%) rotate(0deg); }
+          20% { transform: translate(-50%, -50%) rotate(-2deg); }
+          40% { transform: translate(-50%, -50%) rotate(2deg); }
+          60% { transform: translate(-50%, -50%) rotate(-1deg); }
+          80% { transform: translate(-50%, -50%) rotate(1deg); }
+          100% { transform: translate(-50%, -50%) rotate(0deg); }
+        }
+        @keyframes hwHotBlink {
+          0% { opacity: 0.25; }
+          50% { opacity: 0.85; }
+          100% { opacity: 0.25; }
+        }
+        .hw-mediaWrap {
+          position: relative;
+          border-radius: 14px;
+        }
+        .hw-mediaWrap.pulse {
+          animation: hwPulse 520ms ease-out;
+        }
+        .hw-mediaWrap.leader {
+          box-shadow: 0 0 0 2px rgba(25,195,125,0.45), 0 0 22px rgba(25,195,125,0.20);
+        }
+        .hw-hotGlow {
+          position: absolute;
+          inset: -2px;
+          border-radius: 16px;
+          border: 2px solid rgba(255,0,0,0.55);
+          animation: hwHotBlink 700ms ease-in-out infinite;
+          pointer-events: none;
+        }
+        .hw-outbidBanner {
+          animation: hwShake 520ms ease-in-out;
+        }
+      `}</style>
+
       {/* Шапка + назад */}
       <div
         style={{
@@ -481,11 +532,18 @@ export default function LotPage({ params }) {
         </div>
 
         <div style={{ position: "relative", marginTop: 10 }}>
-          <img
-            src={imgSrc || "/placeholder.jpg"}
-            alt={lot.title}
-            style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
-          />
+          <div
+            key={pulseKey}
+            className={`hw-mediaWrap pulse ${leaderPulse ? "leader" : ""}`}
+          >
+            {isHot && <div className="hw-hotGlow" />}
+
+            <img
+              src={imgSrc || "/placeholder.jpg"}
+              alt={lot.title}
+              style={{ width: "100%", borderRadius: 14, border: "1px solid #333" }}
+            />
+          </div>
 
           <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 8 }}>
             {toasts.map((t) => (
@@ -508,6 +566,7 @@ export default function LotPage({ params }) {
 
           {outbid && (
             <div
+              className="hw-outbidBanner"
               style={{
                 position: "absolute",
                 left: "50%",
